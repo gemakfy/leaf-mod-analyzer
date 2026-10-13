@@ -59,6 +59,62 @@ pub fn count_high_entropy_strings(strings: Vec<String>) -> usize {
     strings.iter().filter(|s| is_encrypted_string(s)).count()
 }
 
+fn build_py_class_facts<'py>(
+    py: Python<'py>,
+    class_facts_cls: &Bound<'py, PyAny>,
+    c: &jar::ClassFactsData,
+) -> PyResult<Bound<'py, PyAny>> {
+    let method_refs = PyFrozenSet::new(py, &c.method_refs)?;
+    let field_refs = PyFrozenSet::new(py, &c.field_refs)?;
+    let class_refs = PyFrozenSet::new(py, &c.class_refs)?;
+    let strings = PyFrozenSet::new(py, &c.strings)?;
+    let float_constants = PyFrozenSet::new(py, &c.float_constants)?;
+    let member_names = PyFrozenSet::new(py, &c.member_names)?;
+    let member_homoglyphs = PyTuple::new(py, &c.member_homoglyphs)?;
+
+    let mut ann_pairs = Vec::new();
+    for (ann_type, elements) in &c.annotations {
+        let py_elements = PyDict::new(py);
+        for (k, v) in elements {
+            py_elements.set_item(k, v)?;
+        }
+        ann_pairs.push((ann_type, py_elements));
+    }
+    let annotations = PyTuple::new(py, ann_pairs)?;
+
+    let py_m_by_m = PyDict::new(py);
+    for (sig, refs) in &c.method_refs_by_method {
+        let f_set = PyFrozenSet::new(py, refs)?;
+        py_m_by_m.set_item(sig, f_set)?;
+    }
+
+    class_facts_cls.call1((
+        &c.class_name,
+        &c.simple_name,
+        method_refs,
+        field_refs,
+        class_refs,
+        strings,
+        float_constants,
+        annotations,
+        member_names,
+        c.char_append_count,
+        member_homoglyphs,
+        py_m_by_m,
+    ))
+}
+
+/// Fast single-class parser extracting ClassFacts from raw bytecode.
+#[pyfunction]
+pub fn extract_class_facts<'py>(py: Python<'py>, raw: &[u8]) -> PyResult<Bound<'py, PyAny>> {
+    let raw_data = classfile::parse_class(raw)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid or unparseable Java class bytes"))?;
+    let facts_data = jar::build_class_facts_data(raw_data);
+    let facts_mod = py.import("app.bytecode.facts")?;
+    let class_facts_cls = facts_mod.getattr("ClassFacts")?;
+    build_py_class_facts(py, &class_facts_cls, &facts_data)
+}
+
 /// Fast single-pass JAR scanner extracting ClassFacts and EntropyMetrics in native Rust.
 #[pyfunction]
 pub fn extract_jar_facts<'py>(py: Python<'py>, jar_path: &str) -> PyResult<Bound<'py, PyAny>> {
@@ -73,45 +129,8 @@ pub fn extract_jar_facts<'py>(py: Python<'py>, jar_path: &str) -> PyResult<Bound
     let entropy_cls = entropy_mod.getattr("EntropyMetrics")?;
 
     let py_classes = PyList::empty(py);
-    for c in result.classes {
-        let method_refs = PyFrozenSet::new(py, &c.method_refs)?;
-        let field_refs = PyFrozenSet::new(py, &c.field_refs)?;
-        let class_refs = PyFrozenSet::new(py, &c.class_refs)?;
-        let strings = PyFrozenSet::new(py, &c.strings)?;
-        let float_constants = PyFrozenSet::new(py, &c.float_constants)?;
-        let member_names = PyFrozenSet::new(py, &c.member_names)?;
-        let member_homoglyphs = PyTuple::new(py, &c.member_homoglyphs)?;
-
-        let mut ann_pairs = Vec::new();
-        for (ann_type, elements) in c.annotations {
-            let py_elements = PyDict::new(py);
-            for (k, v) in elements {
-                py_elements.set_item(k, v)?;
-            }
-            ann_pairs.push((ann_type, py_elements));
-        }
-        let annotations = PyTuple::new(py, ann_pairs)?;
-
-        let py_m_by_m = PyDict::new(py);
-        for (sig, refs) in c.method_refs_by_method {
-            let f_set = PyFrozenSet::new(py, &refs)?;
-            py_m_by_m.set_item(sig, f_set)?;
-        }
-
-        let class_facts = class_facts_cls.call1((
-            c.class_name,
-            c.simple_name,
-            method_refs,
-            field_refs,
-            class_refs,
-            strings,
-            float_constants,
-            annotations,
-            member_names,
-            c.char_append_count,
-            member_homoglyphs,
-            py_m_by_m,
-        ))?;
+    for c in &result.classes {
+        let class_facts = build_py_class_facts(py, &class_facts_cls, c)?;
         py_classes.append(class_facts)?;
     }
 
@@ -143,6 +162,7 @@ fn mod_analyzer_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(string_entropy, m)?)?;
     m.add_function(wrap_pyfunction!(is_encrypted_string, m)?)?;
     m.add_function(wrap_pyfunction!(count_high_entropy_strings, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_class_facts, m)?)?;
     m.add_function(wrap_pyfunction!(extract_jar_facts, m)?)?;
     Ok(())
 }

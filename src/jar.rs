@@ -171,7 +171,7 @@ fn should_skip_suffix(name: &str) -> bool {
     SKIP_SUFFIXES.iter().any(|&suffix| lower.ends_with(suffix))
 }
 
-fn build_class_facts_data(data: RawClassData) -> ClassFactsData {
+pub fn build_class_facts_data(data: RawClassData) -> ClassFactsData {
     let mut homoglyphs = Vec::new();
     if is_homoglyph(&data.simple_name) {
         homoglyphs.push(data.simple_name.clone());
