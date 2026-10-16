@@ -1,5 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
+/// JVM class file magic number (0xCAFEBABE).
+pub const JVM_MAGIC: &[u8; 4] = b"\xCA\xFE\xBA\xBE";
+
+// Constant pool tags (JVM Spec §4.4)
 const CONSTANT_UTF8: u8 = 1;
 const CONSTANT_INTEGER: u8 = 3;
 const CONSTANT_FLOAT: u8 = 4;
@@ -18,42 +22,112 @@ const CONSTANT_INVOKE_DYNAMIC: u8 = 18;
 const CONSTANT_MODULE: u8 = 19;
 const CONSTANT_PACKAGE: u8 = 20;
 
+// Selected JVM opcodes (JVM Spec §6.5)
+const OP_TABLESWITCH: u8 = 0xAA;
+const OP_LOOKUPSWITCH: u8 = 0xAB;
+const OP_INVOKEVIRTUAL: u8 = 0xB6;
+const OP_INVOKEINTERFACE: u8 = 0xB9;
+const OP_WIDE: u8 = 0xC4;
+
+/// Safe, zero-allocation byte reader over borrowed binary data.
+#[derive(Clone, Copy)]
+pub struct ByteReader<'a> {
+    data: &'a [u8],
+}
+
+impl<'a> ByteReader<'a> {
+    #[inline]
+    pub fn new(data: &'a [u8]) -> Self {
+        Self { data }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    #[inline]
+    pub fn read_u8(&mut self) -> Option<u8> {
+        let (&first, rest) = self.data.split_first()?;
+        self.data = rest;
+        Some(first)
+    }
+
+    #[inline]
+    pub fn read_u16(&mut self) -> Option<u16> {
+        if self.data.len() < 2 {
+            return None;
+        }
+        let (bytes, rest) = self.data.split_at(2);
+        self.data = rest;
+        Some(u16::from_be_bytes([bytes[0], bytes[1]]))
+    }
+
+    #[inline]
+    pub fn read_u32(&mut self) -> Option<u32> {
+        if self.data.len() < 4 {
+            return None;
+        }
+        let (bytes, rest) = self.data.split_at(4);
+        self.data = rest;
+        Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    #[inline]
+    pub fn read_bytes(&mut self, len: usize) -> Option<&'a [u8]> {
+        if self.data.len() < len {
+            return None;
+        }
+        let (bytes, rest) = self.data.split_at(len);
+        self.data = rest;
+        Some(bytes)
+    }
+
+    #[inline]
+    pub fn skip(&mut self, len: usize) -> Option<()> {
+        if self.data.len() < len {
+            return None;
+        }
+        self.data = &self.data[len..];
+        Some(())
+    }
+
+    #[inline]
+    pub fn remaining(&self) -> &'a [u8] {
+        self.data
+    }
+}
+
+// Backward-compatible slice helper functions
 #[inline]
 pub fn read_u1(cursor: &mut &[u8]) -> Option<u8> {
-    if cursor.is_empty() {
-        return None;
-    }
-    let b = cursor[0];
-    *cursor = &cursor[1..];
-    Some(b)
+    ByteReader::new(cursor).read_u8().inspect(|_| *cursor = &cursor[1..])
 }
 
 #[inline]
 pub fn read_u2(cursor: &mut &[u8]) -> Option<u16> {
-    if cursor.len() < 2 {
-        return None;
-    }
-    let val = u16::from_be_bytes([cursor[0], cursor[1]]);
-    *cursor = &cursor[2..];
-    Some(val)
+    ByteReader::new(cursor).read_u16().inspect(|_| *cursor = &cursor[2..])
 }
 
 #[inline]
 pub fn read_u4(cursor: &mut &[u8]) -> Option<u32> {
-    if cursor.len() < 4 {
-        return None;
-    }
-    let val = u32::from_be_bytes([cursor[0], cursor[1], cursor[2], cursor[3]]);
-    *cursor = &cursor[4..];
-    Some(val)
+    ByteReader::new(cursor).read_u32().inspect(|_| *cursor = &cursor[4..])
 }
 
+/// Decode standard and JVM Modified UTF-8 strings.
 pub fn decode_modified_utf8(bytes: &[u8]) -> String {
+    // Fast path: standard UTF-8 without embedded NUL
     if let Ok(s) = std::str::from_utf8(bytes) {
         if !s.contains('\0') {
             return s.to_string();
         }
     }
+
     let mut result = String::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
@@ -99,10 +173,12 @@ pub struct ConstantPool {
 }
 
 impl ConstantPool {
+    #[inline]
     pub fn get_utf8(&self, idx: u16) -> Option<&str> {
         self.utf8.get(&idx).map(|s| s.as_str())
     }
 
+    #[inline]
     pub fn get_class_name(&self, idx: u16) -> Option<&str> {
         let name_idx = self.classes.get(&idx)?;
         self.get_utf8(*name_idx)
@@ -119,86 +195,71 @@ impl ConstantPool {
     }
 }
 
-pub fn parse_constant_pool(cursor: &mut &[u8]) -> Option<ConstantPool> {
-    let count = read_u2(cursor)? as usize;
+pub fn parse_constant_pool(reader: &mut ByteReader) -> Option<ConstantPool> {
+    let count = reader.read_u16()? as usize;
     if count == 0 {
         return None;
     }
+
     let mut cp = ConstantPool::default();
     let mut idx = 1;
     while idx < count {
-        let tag = read_u1(cursor)?;
+        let tag = reader.read_u8()?;
         match tag {
             CONSTANT_UTF8 => {
-                let len = read_u2(cursor)? as usize;
-                if cursor.len() < len {
-                    return None;
-                }
-                let bytes = &cursor[..len];
-                *cursor = &cursor[len..];
+                let len = reader.read_u16()? as usize;
+                let bytes = reader.read_bytes(len)?;
                 cp.utf8.insert(idx as u16, decode_modified_utf8(bytes));
             }
             CONSTANT_INTEGER => {
-                if cursor.len() < 4 { return None; }
-                *cursor = &cursor[4..];
+                reader.skip(4)?;
             }
             CONSTANT_FLOAT => {
-                let bits = read_u4(cursor)?;
+                let bits = reader.read_u32()?;
                 cp.float_constants.push(f32::from_bits(bits) as f64);
             }
             CONSTANT_DOUBLE => {
-                if cursor.len() < 8 { return None; }
-                let bits = u64::from_be_bytes([
-                    cursor[0], cursor[1], cursor[2], cursor[3],
-                    cursor[4], cursor[5], cursor[6], cursor[7],
-                ]);
-                *cursor = &cursor[8..];
+                let bytes = reader.read_bytes(8)?;
+                let bits = u64::from_be_bytes(bytes.try_into().ok()?);
                 cp.float_constants.push(f64::from_bits(bits));
-                idx += 1;
+                idx += 1; // 8-byte constants take two pool entries
             }
             CONSTANT_LONG => {
-                if cursor.len() < 8 { return None; }
-                *cursor = &cursor[8..];
+                reader.skip(8)?;
                 idx += 1;
             }
             CONSTANT_CLASS => {
-                let name_idx = read_u2(cursor)?;
-                cp.classes.insert(idx as u16, name_idx);
+                cp.classes.insert(idx as u16, reader.read_u16()?);
             }
             CONSTANT_STRING => {
-                let str_idx = read_u2(cursor)?;
-                cp.strings.insert(idx as u16, str_idx);
+                cp.strings.insert(idx as u16, reader.read_u16()?);
             }
             CONSTANT_FIELDREF => {
-                let class_idx = read_u2(cursor)?;
-                let nt_idx = read_u2(cursor)?;
+                let class_idx = reader.read_u16()?;
+                let nt_idx = reader.read_u16()?;
                 cp.field_refs.insert(idx as u16, (class_idx, nt_idx));
             }
             CONSTANT_METHODREF | CONSTANT_INTERFACE_METHODREF => {
-                let class_idx = read_u2(cursor)?;
-                let nt_idx = read_u2(cursor)?;
+                let class_idx = reader.read_u16()?;
+                let nt_idx = reader.read_u16()?;
                 cp.method_refs.insert(idx as u16, (class_idx, nt_idx));
             }
             CONSTANT_NAME_AND_TYPE => {
-                let name_idx = read_u2(cursor)?;
-                let desc_idx = read_u2(cursor)?;
+                let name_idx = reader.read_u16()?;
+                let desc_idx = reader.read_u16()?;
                 cp.name_and_types.insert(idx as u16, (name_idx, desc_idx));
             }
             CONSTANT_METHOD_HANDLE => {
-                if cursor.len() < 3 { return None; }
-                *cursor = &cursor[3..];
+                reader.skip(3)?;
             }
             CONSTANT_METHOD_TYPE => {
-                if cursor.len() < 2 { return None; }
-                *cursor = &cursor[2..];
+                reader.skip(2)?;
             }
             CONSTANT_DYNAMIC | CONSTANT_INVOKE_DYNAMIC => {
-                if cursor.len() < 4 { return None; }
-                *cursor = &cursor[4..];
+                reader.skip(4)?;
             }
             CONSTANT_MODULE | CONSTANT_PACKAGE => {
-                if cursor.len() < 2 { return None; }
-                *cursor = &cursor[2..];
+                reader.skip(2)?;
             }
             _ => return None,
         }
@@ -225,6 +286,7 @@ pub struct RawClassData {
     pub has_encrypted_strings: usize,
 }
 
+/// Check if an identifier consists of visually confusable homoglyphs (e.g. IlIl, O0O).
 pub fn is_homoglyph(name: &str) -> bool {
     let bytes = name.as_bytes();
     if bytes.len() < 2 {
@@ -240,15 +302,16 @@ pub fn is_homoglyph(name: &str) -> bool {
 }
 
 pub fn parse_class(raw: &[u8]) -> Option<RawClassData> {
-    if raw.len() < 10 || &raw[0..4] != b"\xCA\xFE\xBA\xBE" {
+    if raw.len() < 10 || &raw[0..4] != JVM_MAGIC {
         return None;
     }
-    let mut cursor = &raw[8..]; // skip magic and version
-    let cp = parse_constant_pool(&mut cursor)?;
 
-    let _access_flags = read_u2(&mut cursor)?;
-    let this_class_idx = read_u2(&mut cursor)?;
-    let _super_class_idx = read_u2(&mut cursor)?;
+    let mut reader = ByteReader::new(&raw[8..]); // skip magic and version
+    let cp = parse_constant_pool(&mut reader)?;
+
+    let _access_flags = reader.read_u16()?;
+    let this_class_idx = reader.read_u16()?;
+    let _super_class_idx = reader.read_u16()?;
 
     let this_class = cp.get_class_name(this_class_idx)?.to_string();
     let simple_name = this_class.rsplit('/').next().unwrap_or(&this_class).to_string();
@@ -259,7 +322,20 @@ pub fn parse_class(raw: &[u8]) -> Option<RawClassData> {
         ..Default::default()
     };
 
-    // Populate constant pool facts
+    populate_constant_pool_facts(&cp, &mut data);
+
+    // Skip interfaces
+    let interfaces_count = reader.read_u16()? as usize;
+    reader.skip(interfaces_count * 2)?;
+
+    parse_fields(&mut reader, &cp, &mut data)?;
+    parse_methods(&mut reader, &cp, &mut data)?;
+    parse_attributes(&mut reader, &cp, &mut data, None)?;
+
+    Some(data)
+}
+
+fn populate_constant_pool_facts(cp: &ConstantPool, data: &mut RawClassData) {
     for &name_idx in cp.classes.values() {
         if let Some(s) = cp.get_utf8(name_idx) {
             data.class_refs.insert(s.to_string());
@@ -284,63 +360,59 @@ pub fn parse_class(raw: &[u8]) -> Option<RawClassData> {
         }
     }
     data.float_constants = cp.float_constants.clone();
+}
 
-    // Skip interfaces
-    let interfaces_count = read_u2(&mut cursor)? as usize;
-    if cursor.len() < interfaces_count * 2 {
-        return None;
-    }
-    cursor = &cursor[interfaces_count * 2..];
-
-    // Parse fields
-    let fields_count = read_u2(&mut cursor)? as usize;
+fn parse_fields(
+    reader: &mut ByteReader,
+    cp: &ConstantPool,
+    data: &mut RawClassData,
+) -> Option<()> {
+    let fields_count = reader.read_u16()? as usize;
     for _ in 0..fields_count {
-        let _f_access = read_u2(&mut cursor)?;
-        let name_idx = read_u2(&mut cursor)?;
-        let _desc_idx = read_u2(&mut cursor)?;
+        let _f_access = reader.read_u16()?;
+        let name_idx = reader.read_u16()?;
+        let _desc_idx = reader.read_u16()?;
         if let Some(name) = cp.get_utf8(name_idx) {
             data.member_names.insert(name.to_string());
         }
-        parse_attributes(&mut cursor, &cp, &mut data, None)?;
+        parse_attributes(reader, cp, data, None)?;
     }
+    Some(())
+}
 
-    // Parse methods
-    let methods_count = read_u2(&mut cursor)? as usize;
+fn parse_methods(
+    reader: &mut ByteReader,
+    cp: &ConstantPool,
+    data: &mut RawClassData,
+) -> Option<()> {
+    let methods_count = reader.read_u16()? as usize;
     data.total_methods = methods_count;
     for _ in 0..methods_count {
-        let _m_access = read_u2(&mut cursor)?;
-        let name_idx = read_u2(&mut cursor)?;
-        let desc_idx = read_u2(&mut cursor)?;
+        let _m_access = reader.read_u16()?;
+        let name_idx = reader.read_u16()?;
+        let desc_idx = reader.read_u16()?;
         let m_name = cp.get_utf8(name_idx).unwrap_or("").to_string();
         let m_desc = cp.get_utf8(desc_idx).unwrap_or("").to_string();
         if !m_name.is_empty() {
             data.member_names.insert(m_name.clone());
         }
         let m_sig = format!("{m_name}{m_desc}");
-        parse_attributes(&mut cursor, &cp, &mut data, Some(&m_sig))?;
+        parse_attributes(reader, cp, data, Some(&m_sig))?;
     }
-
-    // Parse class attributes (e.g. annotations)
-    parse_attributes(&mut cursor, &cp, &mut data, None)?;
-
-    Some(data)
+    Some(())
 }
 
 fn parse_attributes(
-    cursor: &mut &[u8],
+    reader: &mut ByteReader,
     cp: &ConstantPool,
     data: &mut RawClassData,
     method_sig: Option<&str>,
 ) -> Option<()> {
-    let attr_count = read_u2(cursor)? as usize;
+    let attr_count = reader.read_u16()? as usize;
     for _ in 0..attr_count {
-        let name_idx = read_u2(cursor)?;
-        let length = read_u4(cursor)? as usize;
-        if cursor.len() < length {
-            return None;
-        }
-        let attr_data = &cursor[..length];
-        *cursor = &cursor[length..];
+        let name_idx = reader.read_u16()?;
+        let length = reader.read_u32()? as usize;
+        let attr_data = reader.read_bytes(length)?;
 
         let attr_name = cp.get_utf8(name_idx).unwrap_or("");
         if attr_name == "Code" {
@@ -353,21 +425,16 @@ fn parse_attributes(
 }
 
 fn scan_code_attribute(
-    mut code_attr: &[u8],
+    code_attr: &[u8],
     cp: &ConstantPool,
     data: &mut RawClassData,
     method_sig: Option<&str>,
 ) -> Option<()> {
-    if code_attr.len() < 8 {
-        return None;
-    }
-    let _max_stack = read_u2(&mut code_attr)?;
-    let _max_locals = read_u2(&mut code_attr)?;
-    let code_len = read_u4(&mut code_attr)? as usize;
-    if code_attr.len() < code_len {
-        return None;
-    }
-    let bytecode = &code_attr[..code_len];
+    let mut reader = ByteReader::new(code_attr);
+    let _max_stack = reader.read_u16()?;
+    let _max_locals = reader.read_u16()?;
+    let code_len = reader.read_u32()? as usize;
+    let bytecode = reader.read_bytes(code_len)?;
 
     let mut offset = 0;
     let mut has_switch = false;
@@ -375,7 +442,7 @@ fn scan_code_attribute(
 
     while offset < bytecode.len() {
         let op = bytecode[offset];
-        if (0xB6..=0xB9).contains(&op) && offset + 2 < bytecode.len() {
+        if (OP_INVOKEVIRTUAL..=OP_INVOKEINTERFACE).contains(&op) && offset + 2 < bytecode.len() {
             let cp_idx = u16::from_be_bytes([bytecode[offset + 1], bytecode[offset + 2]]);
             if let Some((owner, name, desc)) = cp.resolve_member_ref(cp_idx, true) {
                 m_refs.insert(format!("{owner}.{name}"));
@@ -383,7 +450,7 @@ fn scan_code_attribute(
                     data.char_append_count += 1;
                 }
             }
-        } else if op == 0xAA || op == 0xAB {
+        } else if op == OP_TABLESWITCH || op == OP_LOOKUPSWITCH {
             has_switch = true;
         }
 
@@ -406,24 +473,34 @@ fn scan_code_attribute(
 }
 
 fn next_pc(op: u8, code: &[u8], offset: usize) -> usize {
-    if op == 0xAA { // tableswitch
+    if op == OP_TABLESWITCH {
         let mut i = offset + 1;
-        while i % 4 != 0 { i += 1; }
-        if i + 12 > code.len() { return code.len(); }
+        while !i.is_multiple_of(4) {
+            i += 1;
+        }
+        if i + 12 > code.len() {
+            return code.len();
+        }
         let low = i32::from_be_bytes([code[i + 4], code[i + 5], code[i + 6], code[i + 7]]);
         let high = i32::from_be_bytes([code[i + 8], code[i + 9], code[i + 10], code[i + 11]]);
         let count = (high - low + 1).max(0) as usize;
         return i + 12 + 4 * count;
     }
-    if op == 0xAB { // lookupswitch
+    if op == OP_LOOKUPSWITCH {
         let mut i = offset + 1;
-        while i % 4 != 0 { i += 1; }
-        if i + 8 > code.len() { return code.len(); }
+        while !i.is_multiple_of(4) {
+            i += 1;
+        }
+        if i + 8 > code.len() {
+            return code.len();
+        }
         let npairs = i32::from_be_bytes([code[i + 4], code[i + 5], code[i + 6], code[i + 7]]).max(0) as usize;
         return i + 8 + 8 * npairs;
     }
-    if op == 0xC4 { // wide
-        if offset + 1 >= code.len() { return code.len(); }
+    if op == OP_WIDE {
+        if offset + 1 >= code.len() {
+            return code.len();
+        }
         return if code[offset + 1] == 0x84 { offset + 6 } else { offset + 4 };
     }
 
@@ -438,13 +515,14 @@ fn next_pc(op: u8, code: &[u8], offset: usize) -> usize {
 }
 
 fn parse_annotation_attribute(
-    mut cursor: &[u8],
+    attr_data: &[u8],
     cp: &ConstantPool,
     out: &mut Vec<(String, HashMap<String, Vec<String>>)>,
 ) -> Option<()> {
-    let count = read_u2(&mut cursor)? as usize;
+    let mut reader = ByteReader::new(attr_data);
+    let count = reader.read_u16()? as usize;
     for _ in 0..count {
-        if let Some(ann) = parse_one_annotation(&mut cursor, cp) {
+        if let Some(ann) = parse_one_annotation(&mut reader, cp) {
             out.push(ann);
         }
     }
@@ -452,19 +530,19 @@ fn parse_annotation_attribute(
 }
 
 fn parse_one_annotation(
-    cursor: &mut &[u8],
+    reader: &mut ByteReader,
     cp: &ConstantPool,
 ) -> Option<(String, HashMap<String, Vec<String>>)> {
-    let type_idx = read_u2(cursor)?;
+    let type_idx = reader.read_u16()?;
     let type_name = cp.get_utf8(type_idx)?.to_string();
-    let num_pairs = read_u2(cursor)? as usize;
+    let num_pairs = reader.read_u16()? as usize;
     let mut elements: HashMap<String, Vec<String>> = HashMap::new();
 
     for _ in 0..num_pairs {
-        let name_idx = read_u2(cursor)?;
+        let name_idx = reader.read_u16()?;
         let name = cp.get_utf8(name_idx).unwrap_or("").to_string();
         let mut vals = Vec::new();
-        read_element_value(cursor, cp, &mut vals);
+        read_element_value(reader, cp, &mut vals);
         if !name.is_empty() && !vals.is_empty() {
             elements.insert(name, vals);
         }
@@ -472,45 +550,39 @@ fn parse_one_annotation(
     Some((type_name, elements))
 }
 
-fn read_element_value(cursor: &mut &[u8], cp: &ConstantPool, out: &mut Vec<String>) -> Option<()> {
-    let tag = read_u1(cursor)?;
+fn read_element_value(reader: &mut ByteReader, cp: &ConstantPool, out: &mut Vec<String>) -> Option<()> {
+    let tag = reader.read_u8()?;
     match tag {
-        b's' => {
-            let idx = read_u2(cursor)?;
-            if let Some(s) = cp.get_utf8(idx) {
-                out.push(s.to_string());
-            }
-        }
-        b'c' => {
-            let idx = read_u2(cursor)?;
+        b's' | b'c' => {
+            let idx = reader.read_u16()?;
             if let Some(s) = cp.get_utf8(idx) {
                 out.push(s.to_string());
             }
         }
         b'e' => {
-            let _t = read_u2(cursor)?;
-            let v = read_u2(cursor)?;
-            if let Some(s) = cp.get_utf8(v) {
+            let _enum_type_idx = reader.read_u16()?;
+            let const_name_idx = reader.read_u16()?;
+            if let Some(s) = cp.get_utf8(const_name_idx) {
                 out.push(s.to_string());
             }
         }
         b'[' => {
-            let num = read_u2(cursor)? as usize;
+            let num = reader.read_u16()? as usize;
             for _ in 0..num {
-                read_element_value(cursor, cp, out);
+                read_element_value(reader, cp, out);
             }
         }
         b'@' => {
-            let _t = read_u2(cursor)?;
-            let pairs = read_u2(cursor)? as usize;
+            let _type_idx = reader.read_u16()?;
+            let pairs = reader.read_u16()? as usize;
             for _ in 0..pairs {
-                let _n = read_u2(cursor)?;
-                read_element_value(cursor, cp, out);
+                let _name_idx = reader.read_u16()?;
+                read_element_value(reader, cp, out);
             }
         }
         _ => {
             // Primitive tags have a 2-byte const_value_index
-            let _ = read_u2(cursor)?;
+            let _ = reader.read_u16()?;
         }
     }
     Some(())

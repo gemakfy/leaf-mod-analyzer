@@ -38,17 +38,20 @@ pub fn is_encrypted_string(s: &str) -> bool {
     if char_count < 20 {
         return false;
     }
-    let non_ascii_count = s.chars().filter(|&ch| ch as u32 > 127).count();
+    let non_ascii_count = s.chars().filter(|&ch| !ch.is_ascii()).count();
     if non_ascii_count >= 8 {
         let ratio = (non_ascii_count as f64) / (char_count as f64);
         if ratio >= 0.4 && shannon_entropy(s.as_bytes()) >= 4.2 {
             return true;
         }
     }
-    if char_count >= 64 && !s.contains(' ') && !s.contains('.') && !s.contains('/') {
-        if shannon_entropy(s.as_bytes()) >= 5.0 {
-            return true;
-        }
+    if char_count >= 64
+        && !s.contains(' ')
+        && !s.contains('.')
+        && !s.contains('/')
+        && shannon_entropy(s.as_bytes()) >= 5.0
+    {
+        return true;
     }
     false
 }
