@@ -1,8 +1,12 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyFrozenSet, PyList, PyTuple};
 
 pub mod classfile;
+pub mod hashing;
 pub mod jar;
+pub mod py_bridge;
+pub mod rules;
+
+pub use py_bridge::RuleEngine;
 
 /// Calculate Shannon entropy in bits per byte (0.0 to 8.0) rounded to 4 decimals.
 #[pyfunction]
@@ -38,6 +42,7 @@ pub fn is_encrypted_string(s: &str) -> bool {
     if char_count < 20 {
         return false;
     }
+
     let non_ascii_count = s.chars().filter(|&ch| !ch.is_ascii()).count();
     if non_ascii_count >= 8 {
         let ratio = (non_ascii_count as f64) / (char_count as f64);
@@ -62,101 +67,39 @@ pub fn count_high_entropy_strings(strings: Vec<String>) -> usize {
     strings.iter().filter(|s| is_encrypted_string(s)).count()
 }
 
-fn build_py_class_facts<'py>(
-    py: Python<'py>,
-    class_facts_cls: &Bound<'py, PyAny>,
-    c: &jar::ClassFactsData,
-) -> PyResult<Bound<'py, PyAny>> {
-    let method_refs = PyFrozenSet::new(py, &c.method_refs)?;
-    let field_refs = PyFrozenSet::new(py, &c.field_refs)?;
-    let class_refs = PyFrozenSet::new(py, &c.class_refs)?;
-    let strings = PyFrozenSet::new(py, &c.strings)?;
-    let float_constants = PyFrozenSet::new(py, &c.float_constants)?;
-    let member_names = PyFrozenSet::new(py, &c.member_names)?;
-    let member_homoglyphs = PyTuple::new(py, &c.member_homoglyphs)?;
-
-    let mut ann_pairs = Vec::new();
-    for (ann_type, elements) in &c.annotations {
-        let py_elements = PyDict::new(py);
-        for (k, v) in elements {
-            py_elements.set_item(k, v)?;
-        }
-        ann_pairs.push((ann_type, py_elements));
-    }
-    let annotations = PyTuple::new(py, ann_pairs)?;
-
-    let py_m_by_m = PyDict::new(py);
-    for (sig, refs) in &c.method_refs_by_method {
-        let f_set = PyFrozenSet::new(py, refs)?;
-        py_m_by_m.set_item(sig, f_set)?;
-    }
-
-    class_facts_cls.call1((
-        &c.class_name,
-        &c.simple_name,
-        method_refs,
-        field_refs,
-        class_refs,
-        strings,
-        float_constants,
-        annotations,
-        member_names,
-        c.char_append_count,
-        member_homoglyphs,
-        py_m_by_m,
-    ))
-}
-
 /// Fast single-class parser extracting ClassFacts from raw bytecode.
 #[pyfunction]
 pub fn extract_class_facts<'py>(py: Python<'py>, raw: &[u8]) -> PyResult<Bound<'py, PyAny>> {
-    let raw_data = classfile::parse_class(raw)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Invalid or unparseable Java class bytes"))?;
+    let raw_data = classfile::parse_class(raw).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err("Invalid or unparseable Java class bytes")
+    })?;
     let facts_data = jar::build_class_facts_data(raw_data);
     let facts_mod = py.import("app.bytecode.facts")?;
     let class_facts_cls = facts_mod.getattr("ClassFacts")?;
-    build_py_class_facts(py, &class_facts_cls, &facts_data)
+    py_bridge::build_py_class_facts(py, &class_facts_cls, &facts_data)
 }
 
-/// Fast single-pass JAR scanner extracting ClassFacts and EntropyMetrics in native Rust.
+/// Fast single-pass JAR scanner extracting ClassFacts and EntropyMetrics in native Rust without blocking GIL.
 #[pyfunction]
 pub fn extract_jar_facts<'py>(py: Python<'py>, jar_path: &str) -> PyResult<Bound<'py, PyAny>> {
-    let result = jar::scan_jar(jar_path)
+    let result = py
+        .detach(|| jar::scan_jar(jar_path))
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
 
-    let facts_mod = py.import("app.bytecode.facts")?;
-    let class_facts_cls = facts_mod.getattr("ClassFacts")?;
-    let jar_facts_cls = facts_mod.getattr("JarFacts")?;
+    py_bridge::build_py_jar_facts(py, &result)
+}
 
-    let entropy_mod = py.import("app.bytecode.entropy")?;
-    let entropy_cls = entropy_mod.getattr("EntropyMetrics")?;
+/// Compute SHA-512 hex digest of a file on disk without blocking GIL.
+#[pyfunction]
+pub fn sha512_file(py: Python<'_>, file_path: &str) -> PyResult<String> {
+    py.detach(|| hashing::sha512_file(file_path))
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+}
 
-    let py_classes = PyList::empty(py);
-    for c in &result.classes {
-        let class_facts = build_py_class_facts(py, &class_facts_cls, c)?;
-        py_classes.append(class_facts)?;
-    }
-
-    let ent = result.entropy;
-    let entropy_obj = entropy_cls.call1((
-        ent.byte_entropy_avg,
-        ent.byte_entropy_max,
-        ent.high_entropy_classes,
-        ent.high_entropy_strings,
-        ent.short_name_ratio,
-        ent.switch_density,
-        ent.obfuscation_type,
-    ))?;
-
-    let jar_facts = jar_facts_cls.call1((
-        py_classes,
-        result.unparsed,
-        result.hidden_class_entries,
-        result.missing_entrypoints,
-        entropy_obj,
-    ))?;
-
-    Ok(jar_facts)
+/// Compute SHA-512 hex digest of an in-memory byte slice.
+#[pyfunction]
+pub fn sha512_bytes(data: &[u8]) -> String {
+    hashing::sha512_bytes(data)
 }
 
 #[pymodule]
@@ -167,5 +110,45 @@ fn mod_analyzer_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(count_high_entropy_strings, m)?)?;
     m.add_function(wrap_pyfunction!(extract_class_facts, m)?)?;
     m.add_function(wrap_pyfunction!(extract_jar_facts, m)?)?;
+    m.add_function(wrap_pyfunction!(sha512_file, m)?)?;
+    m.add_function(wrap_pyfunction!(sha512_bytes, m)?)?;
+    m.add_class::<RuleEngine>()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shannon_entropy_of_empty_slice_is_zero() {
+        assert_eq!(shannon_entropy(&[]), 0.0);
+    }
+
+    #[test]
+    fn shannon_entropy_of_uniform_bytes() {
+        let single_byte = [0x42; 100];
+        assert_eq!(shannon_entropy(&single_byte), 0.0);
+
+        let two_equal_bytes = [0x00, 0xFF, 0x00, 0xFF];
+        assert_eq!(shannon_entropy(&two_equal_bytes), 1.0);
+    }
+
+    #[test]
+    fn string_entropy_computes_utf8() {
+        assert_eq!(string_entropy(""), 0.0);
+        assert!(string_entropy("hello world") > 0.0);
+    }
+
+    #[test]
+    fn is_encrypted_string_short_string_is_false() {
+        assert!(!is_encrypted_string("short"));
+    }
+
+    #[test]
+    fn is_encrypted_string_flags_high_entropy_non_ascii() {
+        assert!(is_encrypted_string(
+            "абвгдежзийклмнопрстуфхцчшщъыьэюя123456789"
+        ));
+    }
 }
