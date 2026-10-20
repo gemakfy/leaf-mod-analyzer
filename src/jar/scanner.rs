@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{BufReader, Read, Seek};
+use std::io::{BufReader, Read};
 use std::path::Path;
 use zip::ZipArchive;
 
 use super::entrypoints::{find_missing_entrypoints, parse_entrypoints};
 use super::entropy::build_entropy_metrics;
-use super::models::{ClassFactsData, JarArchiveMetadata, JarFactsResult, JarScanError};
+use super::models::{ClassFactsData, JarFactsResult, JarScanError};
 use crate::classfile::{self, is_homoglyph, RawClassData, JVM_MAGIC};
 
 pub const MAX_CLASS_BYTES: u64 = 32 * 1024 * 1024;
@@ -16,17 +16,50 @@ pub const MAX_SCANNED_CLASSES: usize = 20_000;
 
 pub fn scan_jar(jar_path: &str) -> Result<JarFactsResult, JarScanError> {
     let file = File::open(Path::new(jar_path))?;
-    let reader = BufReader::new(file);
+    let reader = BufReader::with_capacity(64 * 1024, file);
     let mut zip = ZipArchive::new(reader)?;
 
-    let meta = collect_metadata_and_entries(&mut zip);
-    let declared_entrypoints = parse_entrypoints(
-        meta.fabric_mod_content.as_deref(),
-        meta.manifest_content.as_deref(),
-    );
-    let missing_entrypoints = find_missing_entrypoints(declared_entrypoints, &meta.entry_names);
+    let mut entry_names = HashSet::with_capacity(zip.len());
+    let mut manifest_content = None;
+    let mut fabric_mod_content = None;
+    let mut acc = ClassScanAccumulator::default();
+    let mut total_uncompressed_bytes: usize = 0;
 
-    let acc = scan_zip_classes(&mut zip);
+    for i in 0..zip.len() {
+        let Ok(mut file) = zip.by_index(i) else {
+            continue;
+        };
+        let name = file.name().to_string();
+        if !name.ends_with('/') {
+            entry_names.insert(name.clone());
+        }
+
+        if name == "META-INF/MANIFEST.MF" {
+            let mut buf = Vec::new();
+            if file.take(MAX_METADATA_BYTES).read_to_end(&mut buf).is_ok() {
+                manifest_content = Some(String::from_utf8_lossy(&buf).to_string());
+            }
+        } else if name == "fabric.mod.json" {
+            let mut buf = Vec::new();
+            if file.take(MAX_METADATA_BYTES).read_to_end(&mut buf).is_ok() {
+                fabric_mod_content = Some(String::from_utf8_lossy(&buf).to_string());
+            }
+        } else if acc.classes.len() < MAX_SCANNED_CLASSES
+            && total_uncompressed_bytes < MAX_TOTAL_UNCOMPRESSED_BYTES
+        {
+            if let Some(raw_bytes) = read_candidate_class_entry(&mut file) {
+                total_uncompressed_bytes = total_uncompressed_bytes.saturating_add(raw_bytes.len());
+                acc.record_class(&name, &raw_bytes);
+            }
+        }
+    }
+
+    let declared_entrypoints = parse_entrypoints(
+        fabric_mod_content.as_deref(),
+        manifest_content.as_deref(),
+    );
+    let missing_entrypoints = find_missing_entrypoints(declared_entrypoints, &entry_names);
+
     let entropy = build_entropy_metrics(
         acc.byte_entropies,
         acc.classes.len(),
@@ -43,41 +76,6 @@ pub fn scan_jar(jar_path: &str) -> Result<JarFactsResult, JarScanError> {
         missing_entrypoints,
         entropy,
     })
-}
-
-fn collect_metadata_and_entries<R: Read + Seek>(
-    zip: &mut ZipArchive<R>,
-) -> JarArchiveMetadata {
-    let mut entry_names = HashSet::with_capacity(zip.len());
-    let mut manifest_content = None;
-    let mut fabric_mod_content = None;
-
-    for i in 0..zip.len() {
-        let Ok(file) = zip.by_index(i) else {
-            continue;
-        };
-        let name = file.name().to_string();
-        if name == "META-INF/MANIFEST.MF" {
-            let mut buf = Vec::new();
-            if file.take(MAX_METADATA_BYTES).read_to_end(&mut buf).is_ok() {
-                manifest_content = Some(String::from_utf8_lossy(&buf).to_string());
-            }
-        } else if name == "fabric.mod.json" {
-            let mut buf = Vec::new();
-            if file.take(MAX_METADATA_BYTES).read_to_end(&mut buf).is_ok() {
-                fabric_mod_content = Some(String::from_utf8_lossy(&buf).to_string());
-            }
-        }
-        if !name.ends_with('/') {
-            entry_names.insert(name);
-        }
-    }
-
-    JarArchiveMetadata {
-        entry_names,
-        manifest_content,
-        fabric_mod_content,
-    }
 }
 
 fn read_candidate_class_entry(file: &mut zip::read::ZipFile<'_>) -> Option<Vec<u8>> {
@@ -142,31 +140,6 @@ impl ClassScanAccumulator {
     }
 }
 
-fn scan_zip_classes<R: Read + Seek>(
-    zip: &mut ZipArchive<R>,
-) -> ClassScanAccumulator {
-    let mut acc = ClassScanAccumulator::default();
-    let mut total_uncompressed_bytes: usize = 0;
-
-    for i in 0..zip.len() {
-        if acc.classes.len() >= MAX_SCANNED_CLASSES
-            || total_uncompressed_bytes >= MAX_TOTAL_UNCOMPRESSED_BYTES
-        {
-            break;
-        }
-
-        let Ok(mut file) = zip.by_index(i) else {
-            continue;
-        };
-        let Some(raw_bytes) = read_candidate_class_entry(&mut file) else {
-            continue;
-        };
-
-        total_uncompressed_bytes = total_uncompressed_bytes.saturating_add(raw_bytes.len());
-        acc.record_class(file.name(), &raw_bytes);
-    }
-    acc
-}
 
 fn extract_homoglyphs(simple_name: &str, member_names: &HashSet<String>) -> Vec<String> {
     let mut homoglyphs = Vec::new();

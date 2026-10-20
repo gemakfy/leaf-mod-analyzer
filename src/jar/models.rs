@@ -43,10 +43,3 @@ pub struct JarFactsResult {
     pub missing_entrypoints: Vec<String>,
     pub entropy: EntropyMetricsData,
 }
-
-#[derive(Debug, Clone)]
-pub struct JarArchiveMetadata {
-    pub entry_names: HashSet<String>,
-    pub manifest_content: Option<String>,
-    pub fabric_mod_content: Option<String>,
-}
