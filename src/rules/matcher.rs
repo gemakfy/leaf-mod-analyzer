@@ -34,7 +34,10 @@ pub fn annotation_match(
     rx: Option<&fancy_regex::Regex>,
 ) -> bool {
     for (type_name, elements) in annotations {
-        if !type_suffixes.iter().any(|suffix| type_name.ends_with(suffix)) {
+        if !type_suffixes
+            .iter()
+            .any(|suffix| type_name.ends_with(suffix))
+        {
             continue;
         }
         let Some(rx) = rx else {
@@ -61,7 +64,10 @@ impl CompiledMatcher {
                 let Some(rx) = &self.regex else {
                     return false;
                 };
-                facts.strings.iter().any(|s| rx.is_match(s).unwrap_or(false))
+                facts
+                    .strings
+                    .iter()
+                    .any(|s| rx.is_match(s).unwrap_or(false))
             }
             MatcherFact::Annotation => {
                 annotation_match(&facts.annotations, &self.any, self.regex.as_ref())
@@ -171,7 +177,8 @@ pub fn class_matchers_hold(rule: &CompiledRule, facts: &ClassFactsData) -> bool 
     if same_method.is_empty() {
         return true;
     }
-    facts.method_refs_by_method.values().any(|refs| {
-        same_method.iter().all(|m| suffix_match(refs, &m.any))
-    })
+    facts
+        .method_refs_by_method
+        .values()
+        .any(|refs| same_method.iter().all(|m| suffix_match(refs, &m.any)))
 }

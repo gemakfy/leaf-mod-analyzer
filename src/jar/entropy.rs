@@ -22,7 +22,7 @@ pub fn classify_obfuscation(
 }
 
 pub fn build_entropy_metrics(
-    entropies: Vec<f64>,
+    entropies: &[f64],
     total_classes: usize,
     short_names: usize,
     high_entropy_strings: usize,

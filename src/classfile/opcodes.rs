@@ -17,7 +17,8 @@ pub fn next_pc(op: u8, code: &[u8], offset: usize) -> usize {
             return code.len();
         }
         let low = i32::from_be_bytes([code[i + 4], code[i + 5], code[i + 6], code[i + 7]]) as i64;
-        let high = i32::from_be_bytes([code[i + 8], code[i + 9], code[i + 10], code[i + 11]]) as i64;
+        let high =
+            i32::from_be_bytes([code[i + 8], code[i + 9], code[i + 10], code[i + 11]]) as i64;
         let count = (high - low + 1).max(0) as usize;
         let Some(table_size) = count.checked_mul(4) else {
             return code.len();
@@ -29,7 +30,8 @@ pub fn next_pc(op: u8, code: &[u8], offset: usize) -> usize {
         if i + 8 > code.len() {
             return code.len();
         }
-        let npairs = i32::from_be_bytes([code[i + 4], code[i + 5], code[i + 6], code[i + 7]]).max(0) as usize;
+        let npairs = i32::from_be_bytes([code[i + 4], code[i + 5], code[i + 6], code[i + 7]]).max(0)
+            as usize;
         let Some(pairs_size) = npairs.checked_mul(8) else {
             return code.len();
         };
@@ -39,14 +41,29 @@ pub fn next_pc(op: u8, code: &[u8], offset: usize) -> usize {
         if offset + 1 >= code.len() {
             return code.len();
         }
-        return if code[offset + 1] == 0x84 { offset + 6 } else { offset + 4 };
+        return if code[offset + 1] == 0x84 {
+            offset + 6
+        } else {
+            offset + 4
+        };
     }
 
     let len = match op {
         // 2-byte opcodes (bipush, ldc, xload, xstore, ret, newarray)
         0x10 | 0x12 | 0x15..=0x19 | 0x36..=0x3A | 0xA9 | 0xBC => 2,
         // 3-byte opcodes (sipush, ldc_w, ldc2_w, iinc, branches, get/put, invokes, new, checkcast, etc.)
-        0x11 | 0x13 | 0x14 | 0x84 | 0x99..=0xA8 | 0xB2..=0xB8 | 0xBB | 0xBD | 0xC0 | 0xC1 | 0xC6 | 0xC7 => 3,
+        0x11
+        | 0x13
+        | 0x14
+        | 0x84
+        | 0x99..=0xA8
+        | 0xB2..=0xB8
+        | 0xBB
+        | 0xBD
+        | 0xC0
+        | 0xC1
+        | 0xC6
+        | 0xC7 => 3,
         // 4-byte opcodes (multianewarray)
         0xC5 => 4,
         // 5-byte opcodes (invokeinterface, invokedynamic, goto_w, jsr_w)

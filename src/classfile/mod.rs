@@ -39,12 +39,14 @@ pub fn is_homoglyph(name: &str) -> bool {
         return false;
     }
 
-    if bytes[0] == b'I' || bytes[0] == b'l' {
-        if bytes[1..].iter().all(|&b| b == b'I' || b == b'l' || b == b'1') {
+    match bytes[0] {
+        b'I' | b'l' if bytes[1..].iter().all(|&b| matches!(b, b'I' | b'l' | b'1')) => {
             return true;
         }
-    } else if bytes[0] == b'O' && bytes[1..].iter().all(|&b| b == b'O' || b == b'0') {
-        return true;
+        b'O' if bytes[1..].iter().all(|&b| matches!(b, b'O' | b'0')) => {
+            return true;
+        }
+        _ => {}
     }
 
     if name.is_ascii() {
@@ -80,7 +82,11 @@ pub fn parse_class(raw: &[u8]) -> Option<RawClassData> {
     let _super_class_idx = reader.read_u16()?;
 
     let this_class = cp.get_class_name(this_class_idx)?.to_string();
-    let simple_name = this_class.rsplit('/').next().unwrap_or(&this_class).to_string();
+    let simple_name = this_class
+        .rsplit('/')
+        .next()
+        .unwrap_or(&this_class)
+        .to_string();
 
     let mut data = RawClassData {
         this_class,
@@ -128,11 +134,7 @@ fn populate_constant_pool_facts(cp: &ConstantPool, data: &mut RawClassData) {
     data.float_constants = cp.float_constants.clone();
 }
 
-fn parse_fields(
-    reader: &mut ByteReader,
-    cp: &ConstantPool,
-    data: &mut RawClassData,
-) -> Option<()> {
+fn parse_fields(reader: &mut ByteReader, cp: &ConstantPool, data: &mut RawClassData) -> Option<()> {
     let fields_count = reader.read_u16()? as usize;
     for _ in 0..fields_count {
         let _f_access = reader.read_u16()?;

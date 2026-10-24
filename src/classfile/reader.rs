@@ -29,40 +29,29 @@ impl<'a> ByteReader<'a> {
 
     #[inline]
     pub fn read_u16(&mut self) -> Option<u16> {
-        if self.data.len() < 2 {
-            return None;
-        }
-        let (bytes, rest) = self.data.split_at(2);
+        let (&chunk, rest) = self.data.split_first_chunk::<2>()?;
         self.data = rest;
-        Some(u16::from_be_bytes([bytes[0], bytes[1]]))
+        Some(u16::from_be_bytes(chunk))
     }
 
     #[inline]
     pub fn read_u32(&mut self) -> Option<u32> {
-        if self.data.len() < 4 {
-            return None;
-        }
-        let (bytes, rest) = self.data.split_at(4);
+        let (&chunk, rest) = self.data.split_first_chunk::<4>()?;
         self.data = rest;
-        Some(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        Some(u32::from_be_bytes(chunk))
     }
 
     #[inline]
     pub fn read_bytes(&mut self, len: usize) -> Option<&'a [u8]> {
-        if self.data.len() < len {
-            return None;
-        }
-        let (bytes, rest) = self.data.split_at(len);
+        let (bytes, rest) = self.data.split_at_checked(len)?;
         self.data = rest;
         Some(bytes)
     }
 
     #[inline]
     pub fn skip(&mut self, len: usize) -> Option<()> {
-        if self.data.len() < len {
-            return None;
-        }
-        self.data = &self.data[len..];
+        let (_, rest) = self.data.split_at_checked(len)?;
+        self.data = rest;
         Some(())
     }
 
@@ -100,7 +89,8 @@ pub fn decode_modified_utf8(bytes: &[u8]) -> String {
         } else if b & 0xF0 == 0xE0 && i + 2 < bytes.len() {
             let b2 = bytes[i + 1];
             let b3 = bytes[i + 2];
-            let code_unit = (((b & 0x0F) as u16) << 12) | (((b2 & 0x3F) as u16) << 6) | ((b3 & 0x3F) as u16);
+            let code_unit =
+                (((b & 0x0F) as u16) << 12) | (((b2 & 0x3F) as u16) << 6) | ((b3 & 0x3F) as u16);
             u16_buf.push(code_unit);
             i += 3;
         } else {

@@ -4,8 +4,8 @@ use std::io::{BufReader, Read};
 use std::path::Path;
 use zip::ZipArchive;
 
-use super::entrypoints::{find_missing_entrypoints, parse_entrypoints};
 use super::entropy::build_entropy_metrics;
+use super::entrypoints::{find_missing_entrypoints, parse_entrypoints};
 use super::models::{ClassFactsData, JarFactsResult, JarScanError};
 use crate::classfile::{self, is_homoglyph, RawClassData, JVM_MAGIC};
 
@@ -54,14 +54,12 @@ pub fn scan_jar(jar_path: &str) -> Result<JarFactsResult, JarScanError> {
         }
     }
 
-    let declared_entrypoints = parse_entrypoints(
-        fabric_mod_content.as_deref(),
-        manifest_content.as_deref(),
-    );
+    let declared_entrypoints =
+        parse_entrypoints(fabric_mod_content.as_deref(), manifest_content.as_deref());
     let missing_entrypoints = find_missing_entrypoints(declared_entrypoints, &entry_names);
 
     let entropy = build_entropy_metrics(
-        acc.byte_entropies,
+        &acc.byte_entropies,
         acc.classes.len(),
         acc.short_names,
         acc.high_entropy_strings,
@@ -89,7 +87,9 @@ fn read_candidate_class_entry(file: &mut zip::read::ZipFile<'_>) -> Option<Vec<u
 
     let mut raw_bytes = Vec::with_capacity(4096);
     raw_bytes.extend_from_slice(&magic);
-    file.take(MAX_CLASS_BYTES).read_to_end(&mut raw_bytes).ok()?;
+    file.take(MAX_CLASS_BYTES)
+        .read_to_end(&mut raw_bytes)
+        .ok()?;
     Some(raw_bytes)
 }
 
@@ -140,20 +140,17 @@ impl ClassScanAccumulator {
     }
 }
 
-
 fn extract_homoglyphs(simple_name: &str, member_names: &HashSet<String>) -> Vec<String> {
-    let mut homoglyphs = Vec::new();
+    let mut homoglyphs = std::collections::BTreeSet::new();
     if is_homoglyph(simple_name) {
-        homoglyphs.push(simple_name.to_string());
+        homoglyphs.insert(simple_name.to_string());
     }
     for m in member_names {
         if is_homoglyph(m) {
-            homoglyphs.push(m.clone());
+            homoglyphs.insert(m.clone());
         }
     }
-    homoglyphs.sort();
-    homoglyphs.dedup();
-    homoglyphs
+    homoglyphs.into_iter().collect()
 }
 
 pub fn build_class_facts_data(data: RawClassData) -> ClassFactsData {

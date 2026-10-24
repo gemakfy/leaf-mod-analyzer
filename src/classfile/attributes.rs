@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use super::constant_pool::ConstantPool;
-use super::opcodes::{next_pc, OP_INVOKEINTERFACE, OP_INVOKEVIRTUAL, OP_LOOKUPSWITCH, OP_TABLESWITCH};
+use super::opcodes::{
+    next_pc, OP_INVOKEINTERFACE, OP_INVOKEVIRTUAL, OP_LOOKUPSWITCH, OP_TABLESWITCH,
+};
 use super::reader::ByteReader;
 use super::RawClassData;
 
@@ -23,7 +25,9 @@ pub fn parse_attributes(
         // Code attribute is only valid on methods (§4.7.3)
         if attr_name == "Code" && method_sig.is_some() {
             scan_code_attribute(attr_data, cp, data, method_sig);
-        } else if attr_name == "RuntimeVisibleAnnotations" || attr_name == "RuntimeInvisibleAnnotations" {
+        } else if attr_name == "RuntimeVisibleAnnotations"
+            || attr_name == "RuntimeInvisibleAnnotations"
+        {
             parse_annotation_attribute(attr_data, cp, &mut data.annotations);
         }
     }
@@ -52,7 +56,10 @@ fn scan_code_attribute(
             let cp_idx = u16::from_be_bytes([bytecode[offset + 1], bytecode[offset + 2]]);
             if let Some((owner, name, desc)) = cp.resolve_member_ref(cp_idx, true) {
                 m_refs.insert(format!("{owner}.{name}"));
-                if owner == "java/lang/StringBuilder" && name == "append" && desc == "(C)Ljava/lang/StringBuilder;" {
+                if owner == "java/lang/StringBuilder"
+                    && name == "append"
+                    && desc == "(C)Ljava/lang/StringBuilder;"
+                {
                     data.char_append_count += 1;
                 }
             }

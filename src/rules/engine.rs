@@ -1,9 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use super::matcher::class_matchers_hold;
-use super::models::{
-    CompiledMatcher, CompiledRule, MatcherFact, RawMatch, RawRule, RuleScope,
-};
+use super::models::{CompiledMatcher, CompiledRule, MatcherFact, RawMatch, RawRule, RuleScope};
 use super::triggers::{class_trigger, jar_trigger, sanitize_path};
 use crate::jar::JarFactsResult;
 
@@ -46,9 +44,10 @@ impl RuleEngine {
             for m in raw.all_of {
                 let fact = MatcherFact::from(m.fact.as_str());
                 let regex = if let Some(ref pat) = m.pattern {
-                    Some(fancy_regex::Regex::new(pat).map_err(|e| {
-                        RuleCompileError::RegexError(pat.clone(), Box::new(e))
-                    })?)
+                    Some(
+                        fancy_regex::Regex::new(pat)
+                            .map_err(|e| RuleCompileError::RegexError(pat.clone(), Box::new(e)))?,
+                    )
                 } else {
                     None
                 };

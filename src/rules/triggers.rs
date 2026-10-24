@@ -49,27 +49,28 @@ pub fn class_trigger(rule: &CompiledRule, facts: &ClassFactsData) -> String {
 
 pub fn jar_trigger(rule: &CompiledRule, facts: &JarFactsResult) -> String {
     for matcher in &rule.all_of {
-        if matcher.fact == MatcherFact::ByteEntropyMaxMin
-            || matcher.fact == MatcherFact::HighEntropyClassesMin
-        {
-            return format!(
-                "High entropy: max {} bits/byte ({} packed classes)",
-                facts.entropy.byte_entropy_max, facts.entropy.high_entropy_classes
-            );
-        }
-        if matcher.fact == MatcherFact::HighEntropyStringsMin {
-            return format!(
-                "Encrypted string pool: {} high-entropy strings",
-                facts.entropy.high_entropy_strings
-            );
-        }
-        if matcher.fact == MatcherFact::ShortNameRatioMin {
-            let pct = (facts.entropy.short_name_ratio * 100.0) as i64;
-            return format!("Aggressive renaming: {}% short class names", pct);
-        }
-        if matcher.fact == MatcherFact::SwitchDensityMin {
-            let pct = (facts.entropy.switch_density * 100.0) as i64;
-            return format!("Control flow flattening: {}% switch dispatch methods", pct);
+        match matcher.fact {
+            MatcherFact::ByteEntropyMaxMin | MatcherFact::HighEntropyClassesMin => {
+                return format!(
+                    "High entropy: max {} bits/byte ({} packed classes)",
+                    facts.entropy.byte_entropy_max, facts.entropy.high_entropy_classes
+                );
+            }
+            MatcherFact::HighEntropyStringsMin => {
+                return format!(
+                    "Encrypted string pool: {} high-entropy strings",
+                    facts.entropy.high_entropy_strings
+                );
+            }
+            MatcherFact::ShortNameRatioMin => {
+                let pct = (facts.entropy.short_name_ratio * 100.0) as i64;
+                return format!("Aggressive renaming: {}% short class names", pct);
+            }
+            MatcherFact::SwitchDensityMin => {
+                let pct = (facts.entropy.switch_density * 100.0) as i64;
+                return format!("Control flow flattening: {}% switch dispatch methods", pct);
+            }
+            _ => {}
         }
     }
 
@@ -79,7 +80,11 @@ pub fn jar_trigger(rule: &CompiledRule, facts: &JarFactsResult) -> String {
         .filter(|c| is_gibberish_name(&c.simple_name))
         .count();
     let mut parts = vec![
-        format!("{}/{} machine-generated class names", gibberish, facts.classes.len()),
+        format!(
+            "{}/{} machine-generated class names",
+            gibberish,
+            facts.classes.len()
+        ),
         format!("{} unparsable", facts.unparsed.len()),
     ];
     if !facts.missing_entrypoints.is_empty() {

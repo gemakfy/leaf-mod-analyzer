@@ -1,6 +1,6 @@
+use sha2::{Digest, Sha512};
 use std::fs::File;
 use std::io::{BufReader, Read};
-use sha2::{Digest, Sha512};
 
 const BUFFER_CAPACITY: usize = 512 * 1024;
 const READ_CHUNK_SIZE: usize = 256 * 1024;

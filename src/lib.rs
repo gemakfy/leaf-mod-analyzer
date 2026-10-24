@@ -19,13 +19,14 @@ pub fn shannon_entropy(data: &[u8]) -> f64 {
         counts[b as usize] += 1;
     }
     let total = data.len() as f64;
-    let mut entropy = 0.0;
-    for &count in &counts {
-        if count > 0 {
-            let p = (count as f64) / total;
-            entropy -= p * p.log2();
-        }
-    }
+    let entropy = counts
+        .iter()
+        .filter(|&&c| c > 0)
+        .map(|&c| {
+            let p = c as f64 / total;
+            -p * p.log2()
+        })
+        .sum::<f64>();
     (entropy * 10000.0).round() / 10000.0
 }
 

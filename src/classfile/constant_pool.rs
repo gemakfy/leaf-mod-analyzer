@@ -45,7 +45,11 @@ impl ConstantPool {
     }
 
     pub fn resolve_member_ref(&self, idx: u16, is_method: bool) -> Option<(&str, &str, &str)> {
-        let map = if is_method { &self.method_refs } else { &self.field_refs };
+        let map = if is_method {
+            &self.method_refs
+        } else {
+            &self.field_refs
+        };
         let (class_idx, nt_idx) = map.get(&idx)?;
         let owner = self.get_class_name(*class_idx)?;
         let (name_idx, desc_idx) = self.name_and_types.get(nt_idx)?;

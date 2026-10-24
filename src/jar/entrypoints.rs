@@ -1,19 +1,12 @@
 use std::collections::HashSet;
 
 pub fn parse_fabric_entrypoint_value(s: &str) -> Option<String> {
-    if s.is_empty() {
-        return None;
-    }
     let class_part = s.split("::").next()?.trim();
     if class_part.is_empty() {
         return None;
     }
     let internal = class_part.replace('.', "/");
-    if !internal.ends_with('/') {
-        Some(internal)
-    } else {
-        None
-    }
+    (!internal.ends_with('/')).then_some(internal)
 }
 
 pub fn parse_fabric_entrypoints(fabric_json: &str, declared: &mut Vec<String>) {
@@ -28,11 +21,9 @@ pub fn parse_fabric_entrypoints(fabric_json: &str, declared: &mut Vec<String>) {
     for (_key, val) in ep_obj {
         if let Some(arr) = val.as_array() {
             for item in arr {
-                let candidate = if let Some(s) = item.as_str() {
-                    Some(s)
-                } else {
-                    item.get("value").and_then(|v| v.as_str())
-                };
+                let candidate = item
+                    .as_str()
+                    .or_else(|| item.get("value").and_then(|v| v.as_str()));
                 if let Some(s) = candidate.and_then(parse_fabric_entrypoint_value) {
                     declared.push(s);
                 }
@@ -48,12 +39,13 @@ pub fn parse_fabric_entrypoints(fabric_json: &str, declared: &mut Vec<String>) {
 pub fn unfold_manifest_lines(manifest: &str) -> Vec<String> {
     let mut unfolded: Vec<String> = Vec::new();
     for line in manifest.lines() {
-        if (line.starts_with(' ') || line.starts_with('\t')) && !unfolded.is_empty() {
-            let last = unfolded.last_mut().unwrap();
-            last.push_str(&line[1..]);
-        } else {
-            unfolded.push(line.to_string());
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if let Some(last) = unfolded.last_mut() {
+                last.push_str(&line[1..]);
+                continue;
+            }
         }
+        unfolded.push(line.to_string());
     }
     unfolded
 }
