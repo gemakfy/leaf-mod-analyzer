@@ -24,23 +24,29 @@ pub struct SingleScanReport {
 
 pub fn collect_jars(target: &Path) -> Vec<PathBuf> {
     if target.is_file() {
-        if target.extension().and_then(|s| s.to_str()) == Some("jar") {
-            return vec![target.to_path_buf()];
-        }
-        return Vec::new();
+        return if is_jar_file(target) {
+            vec![target.to_path_buf()]
+        } else {
+            Vec::new()
+        };
     }
 
     let mut jars = Vec::new();
     if let Ok(entries) = std::fs::read_dir(target) {
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("jar") {
+            if is_jar_file(&p) {
                 jars.push(p);
             }
         }
     }
     jars.sort();
     jars
+}
+
+#[inline]
+fn is_jar_file(path: &Path) -> bool {
+    path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jar")
 }
 
 pub fn scan_single_jar(
@@ -88,10 +94,10 @@ fn calculate_score(matches: &[RawMatch]) -> i64 {
     let mut event_scores: HashMap<(&str, &str), i64> = HashMap::new();
     for m in matches {
         let key = (m.category.as_str(), m.file.as_str());
-        let current = event_scores.entry(key).or_insert(0);
-        if m.score > *current {
-            *current = m.score;
-        }
+        event_scores
+            .entry(key)
+            .and_modify(|current| *current = (*current).max(m.score))
+            .or_insert(m.score);
     }
     event_scores.values().sum()
 }
@@ -119,6 +125,13 @@ pub fn print_single_report(report: &SingleScanReport, style: &Style) {
         report.classes_count,
         report.loader
     );
+    print_telemetry(report, style);
+    print_detections(&report.matches, style);
+    print_verdict(&report.status, report.score, style);
+    println!();
+}
+
+fn print_telemetry(report: &SingleScanReport, style: &Style) {
     println!(
         "{}",
         style.dim("──────────────────────────────────────────────────────────────")
@@ -147,67 +160,54 @@ pub fn print_single_report(report: &SingleScanReport, style: &Style) {
             report.missing_entrypoints.join(", ")
         );
     }
+}
 
+fn print_detections(matches: &[RawMatch], style: &Style) {
     println!(
         "{}",
         style.dim("──────────────────────────────────────────────────────────────")
     );
     println!("{}", style.bold(" DETECTIONS"));
 
-    if report.matches.is_empty() {
+    if matches.is_empty() {
         println!(
             "   {} No suspicious bytecode patterns matched",
             style.green("✔")
         );
-    } else {
-        for m in &report.matches {
-            let tag = match m.severity.to_lowercase().as_str() {
-                "critical" => style.red("[CRITICAL]"),
-                "high" => style.red("[HIGH]    "),
-                "medium" => style.yellow("[MEDIUM]  "),
-                _ => style.cyan("[LOW]     "),
-            };
-            println!(
-                "   {} {} (score: {}) -> {}",
-                tag,
-                style.bold(&m.category),
-                m.score,
-                style.dim(&m.file)
-            );
-            println!("            {}", style.dim(&m.trigger));
-        }
+        return;
     }
 
-    println!(
-        "{}",
-        style.bold("══════════════════════════════════════════════════════════════")
-    );
-    match report.status.as_str() {
-        "detected" => {
-            println!(
-                " VERDICT: {} (Total Score: {})",
-                style.red("DETECTED / MALICIOUS"),
-                report.score
-            );
-        }
-        "suspicious" => {
-            println!(
-                " VERDICT: {} (Total Score: {})",
-                style.yellow("SUSPICIOUS"),
-                report.score
-            );
-        }
-        _ => {
-            println!(
-                " VERDICT: {} (Total Score: {})",
-                style.green("CLEAN"),
-                report.score
-            );
-        }
+    for m in matches {
+        let tag = match m.severity.to_lowercase().as_str() {
+            "critical" => style.red("[CRITICAL]"),
+            "high" => style.red("[HIGH]    "),
+            "medium" => style.yellow("[MEDIUM]  "),
+            _ => style.cyan("[LOW]     "),
+        };
+        println!(
+            "   {} {} (score: {}) -> {}",
+            tag,
+            style.bold(&m.category),
+            m.score,
+            style.dim(&m.file)
+        );
+        println!("            {}", style.dim(&m.trigger));
     }
+}
+
+fn print_verdict(status: &str, score: i64, style: &Style) {
     println!(
         "{}",
         style.bold("══════════════════════════════════════════════════════════════")
     );
-    println!();
+    let (label, score_str) = match status {
+        "detected" => (style.red("DETECTED / MALICIOUS"), format!("{score}")),
+        "suspicious" => (style.yellow("SUSPICIOUS"), format!("{score}")),
+        _ => (style.green("CLEAN"), format!("{score}")),
+    };
+    println!(" VERDICT: {label} (Total Score: {score_str})");
+    println!(
+        "{}",
+        style.bold("══════════════════════════════════════════════════════════════")
+    );
 }

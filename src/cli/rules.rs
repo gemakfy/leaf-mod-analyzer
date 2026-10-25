@@ -25,10 +25,12 @@ pub fn load_rules(custom_path: Option<&Path>) -> Result<(RuleEngine, usize), Str
             } else if path.is_dir() {
                 let mut merged: BTreeMap<String, RawRule> = BTreeMap::new();
                 collect_json_rules(path, &mut merged)?;
-                let json = serde_json::to_string(&merged)
-                    .map_err(|e| format!("Failed to serialize merged rules: {e}"))?;
-                let engine = RuleEngine::from_json(&json)
-                    .map_err(|e| format!("Failed to compile merged rules: {e}"))?;
+                let engine = RuleEngine::from_raw_rules(merged).map_err(|e| {
+                    format!(
+                        "Failed to compile merged rules from {}: {e}",
+                        path.display()
+                    )
+                })?;
                 let count = engine.rules().len();
                 Ok((engine, count))
             } else {

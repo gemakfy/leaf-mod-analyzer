@@ -159,10 +159,10 @@ fn parse_methods(
         let _m_access = reader.read_u16()?;
         let name_idx = reader.read_u16()?;
         let desc_idx = reader.read_u16()?;
-        let m_name = cp.get_utf8(name_idx).unwrap_or("").to_string();
-        let m_desc = cp.get_utf8(desc_idx).unwrap_or("").to_string();
+        let m_name = cp.get_utf8(name_idx).unwrap_or("");
+        let m_desc = cp.get_utf8(desc_idx).unwrap_or("");
         if !m_name.is_empty() {
-            data.member_names.insert(m_name.clone());
+            data.member_names.insert(m_name.to_string());
         }
         let m_sig = format!("{m_name}{m_desc}");
         parse_attributes(reader, cp, data, Some(&m_sig))?;

@@ -26,8 +26,10 @@ pub fn scan_jar(jar_path: &str) -> Result<JarFactsResult, JarScanError> {
         let Ok(name_cow) = file.name() else {
             continue;
         };
+        let is_dir = name_cow.ends_with('/');
         let name = name_cow.to_string();
-        if !name.ends_with('/') {
+
+        if !is_dir {
             entry_names.insert(name.clone());
         }
 
@@ -131,8 +133,15 @@ impl ClassScanAccumulator {
 }
 
 fn extract_homoglyphs(simple_name: &str, member_names: &HashSet<String>) -> Vec<String> {
+    let simple_is_homoglyph = is_homoglyph(simple_name);
+    let any_member_homoglyph = member_names.iter().any(|m| is_homoglyph(m));
+
+    if !simple_is_homoglyph && !any_member_homoglyph {
+        return Vec::new();
+    }
+
     let mut homoglyphs = std::collections::BTreeSet::new();
-    if is_homoglyph(simple_name) {
+    if simple_is_homoglyph {
         homoglyphs.insert(simple_name.to_string());
     }
     for m in member_names {

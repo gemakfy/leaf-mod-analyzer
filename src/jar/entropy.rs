@@ -29,19 +29,20 @@ pub fn build_entropy_metrics(
     total_methods: usize,
     switch_methods: usize,
 ) -> EntropyMetricsData {
+    let (sum_entropy, max_val, high_entropy_classes) = entropies
+        .iter()
+        .fold((0.0_f64, 0.0_f64, 0_usize), |(sum, max_e, count), &e| {
+            (sum + e, max_e.max(e), count + usize::from(e >= 7.0))
+        });
+
     let total_len = entropies.len();
     let avg_entropy = if total_len > 0 {
-        round_to(entropies.iter().sum::<f64>() / total_len as f64, 2)
+        round_to(sum_entropy / total_len as f64, 2)
     } else {
         0.0
     };
-    let max_entropy = if total_len > 0 {
-        let max_val = entropies.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        round_to(max_val, 2)
-    } else {
-        0.0
-    };
-    let high_entropy_classes = entropies.iter().filter(|&&e| e >= 7.0).count();
+    let max_entropy = round_to(max_val, 2);
+
     let short_ratio = if total_classes > 0 {
         round_to(short_names as f64 / total_classes as f64, 3)
     } else {

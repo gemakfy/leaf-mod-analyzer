@@ -27,8 +27,14 @@ impl RuleEngine {
         Self { rules }
     }
 
+    /// Compile engine from a JSON string containing rule definitions.
     pub fn from_json(json_str: &str) -> Result<Self, RuleCompileError> {
         let raw_rules: BTreeMap<String, RawRule> = serde_json::from_str(json_str)?;
+        Self::from_raw_rules(raw_rules)
+    }
+
+    /// Compile engine directly from a map of parsed raw rules without JSON serialization roundtrip.
+    pub fn from_raw_rules(raw_rules: BTreeMap<String, RawRule>) -> Result<Self, RuleCompileError> {
         let mut compiled = Vec::with_capacity(raw_rules.len());
 
         for (name, raw) in raw_rules {
