@@ -15,6 +15,7 @@ pub fn print_banner(style: &Style) {
         "{}",
         style.bold("  █░▀░█ █▄█ █▄▀   █▀█ █░▀█ █▀█ █▄▄ ░█░ █▄ ██▄ █▀▄")
     );
+    println!();
     println!(
         "   {} {}  {} {}",
         style.dim("Website:"),
