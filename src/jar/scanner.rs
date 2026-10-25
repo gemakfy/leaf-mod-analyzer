@@ -9,11 +9,6 @@ use super::entrypoints::{find_missing_entrypoints, parse_entrypoints};
 use super::models::{ClassFactsData, JarFactsResult, JarScanError};
 use crate::classfile::{self, is_homoglyph, RawClassData, JVM_MAGIC};
 
-pub const MAX_CLASS_BYTES: u64 = 32 * 1024 * 1024;
-pub const MAX_METADATA_BYTES: u64 = 1024 * 1024; // 1 MB limit for manifest / fabric.mod.json
-pub const MAX_TOTAL_UNCOMPRESSED_BYTES: usize = 256 * 1024 * 1024; // 256 MB budget
-pub const MAX_SCANNED_CLASSES: usize = 20_000;
-
 pub fn scan_jar(jar_path: &str) -> Result<JarFactsResult, JarScanError> {
     let file = File::open(Path::new(jar_path))?;
     let reader = BufReader::with_capacity(64 * 1024, file);
@@ -23,34 +18,31 @@ pub fn scan_jar(jar_path: &str) -> Result<JarFactsResult, JarScanError> {
     let mut manifest_content = None;
     let mut fabric_mod_content = None;
     let mut acc = ClassScanAccumulator::default();
-    let mut total_uncompressed_bytes: usize = 0;
 
     for i in 0..zip.len() {
         let Ok(mut file) = zip.by_index(i) else {
             continue;
         };
-        let name = file.name().to_string();
+        let Ok(name_cow) = file.name() else {
+            continue;
+        };
+        let name = name_cow.to_string();
         if !name.ends_with('/') {
             entry_names.insert(name.clone());
         }
 
         if name == "META-INF/MANIFEST.MF" {
             let mut buf = Vec::new();
-            if file.take(MAX_METADATA_BYTES).read_to_end(&mut buf).is_ok() {
+            if file.read_to_end(&mut buf).is_ok() {
                 manifest_content = Some(String::from_utf8_lossy(&buf).to_string());
             }
         } else if name == "fabric.mod.json" {
             let mut buf = Vec::new();
-            if file.take(MAX_METADATA_BYTES).read_to_end(&mut buf).is_ok() {
+            if file.read_to_end(&mut buf).is_ok() {
                 fabric_mod_content = Some(String::from_utf8_lossy(&buf).to_string());
             }
-        } else if acc.classes.len() < MAX_SCANNED_CLASSES
-            && total_uncompressed_bytes < MAX_TOTAL_UNCOMPRESSED_BYTES
-        {
-            if let Some(raw_bytes) = read_candidate_class_entry(&mut file) {
-                total_uncompressed_bytes = total_uncompressed_bytes.saturating_add(raw_bytes.len());
-                acc.record_class(&name, &raw_bytes);
-            }
+        } else if let Some(raw_bytes) = read_candidate_class_entry(&mut file) {
+            acc.record_class(&name, &raw_bytes);
         }
     }
 
@@ -76,7 +68,7 @@ pub fn scan_jar(jar_path: &str) -> Result<JarFactsResult, JarScanError> {
     })
 }
 
-fn read_candidate_class_entry(file: &mut zip::read::ZipFile<'_>) -> Option<Vec<u8>> {
+fn read_candidate_class_entry<R: Read>(file: &mut zip::read::ZipFile<'_, R>) -> Option<Vec<u8>> {
     if file.is_dir() {
         return None;
     }
@@ -87,9 +79,7 @@ fn read_candidate_class_entry(file: &mut zip::read::ZipFile<'_>) -> Option<Vec<u
 
     let mut raw_bytes = Vec::with_capacity(4096);
     raw_bytes.extend_from_slice(&magic);
-    file.take(MAX_CLASS_BYTES)
-        .read_to_end(&mut raw_bytes)
-        .ok()?;
+    file.read_to_end(&mut raw_bytes).ok()?;
     Some(raw_bytes)
 }
 
@@ -111,7 +101,7 @@ impl ClassScanAccumulator {
             self.hidden_class_entries += 1;
         }
 
-        self.byte_entropies.push(crate::shannon_entropy(raw_bytes));
+        self.byte_entropies.push(crate::entropy(raw_bytes));
 
         match classfile::parse_class(raw_bytes) {
             Some(data) => {

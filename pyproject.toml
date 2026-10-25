@@ -6,3 +6,6 @@ build-backend = "maturin"
 name = "mod_analyzer_core"
 version = "0.1.0"
 requires-python = ">=3.10"
+
+[tool.maturin]
+features = ["python"]

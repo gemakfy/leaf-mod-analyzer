@@ -1,16 +1,22 @@
+#[cfg(feature = "python")]
 use pyo3::prelude::*;
 
 pub mod classfile;
+pub mod cli;
 pub mod hashing;
 pub mod jar;
+#[cfg(feature = "python")]
 pub mod py_bridge;
 pub mod rules;
 
+#[cfg(feature = "python")]
 pub use py_bridge::RuleEngine;
+#[cfg(not(feature = "python"))]
+pub use rules::engine::RuleEngine;
 
-/// Calculate Shannon entropy in bits per byte (0.0 to 8.0) rounded to 4 decimals.
-#[pyfunction]
-pub fn shannon_entropy(data: &[u8]) -> f64 {
+/// Calculate entropy in bits per byte (0.0 to 8.0) rounded to 4 decimals.
+#[cfg_attr(feature = "python", pyfunction)]
+pub fn entropy(data: &[u8]) -> f64 {
     if data.is_empty() {
         return 0.0;
     }
@@ -19,7 +25,7 @@ pub fn shannon_entropy(data: &[u8]) -> f64 {
         counts[b as usize] += 1;
     }
     let total = data.len() as f64;
-    let entropy = counts
+    let val = counts
         .iter()
         .filter(|&&c| c > 0)
         .map(|&c| {
@@ -27,17 +33,23 @@ pub fn shannon_entropy(data: &[u8]) -> f64 {
             -p * p.log2()
         })
         .sum::<f64>();
-    (entropy * 10000.0).round() / 10000.0
+    (val * 10000.0).round() / 10000.0
 }
 
-/// Calculate Shannon entropy of a UTF-8 string.
-#[pyfunction]
+/// Backwards compatibility alias for `entropy`.
+#[cfg_attr(feature = "python", pyfunction)]
+pub fn shannon_entropy(data: &[u8]) -> f64 {
+    entropy(data)
+}
+
+/// Calculate entropy of a UTF-8 string.
+#[cfg_attr(feature = "python", pyfunction)]
 pub fn string_entropy(text: &str) -> f64 {
-    shannon_entropy(text.as_bytes())
+    entropy(text.as_bytes())
 }
 
 /// Determine if a string looks like an encrypted or packed pool literal.
-#[pyfunction]
+#[cfg_attr(feature = "python", pyfunction)]
 pub fn is_encrypted_string(s: &str) -> bool {
     let char_count = s.chars().count();
     if char_count < 20 {
@@ -47,7 +59,7 @@ pub fn is_encrypted_string(s: &str) -> bool {
     let non_ascii_count = s.chars().filter(|&ch| !ch.is_ascii()).count();
     if non_ascii_count >= 8 {
         let ratio = (non_ascii_count as f64) / (char_count as f64);
-        if ratio >= 0.4 && shannon_entropy(s.as_bytes()) >= 4.2 {
+        if ratio >= 0.4 && entropy(s.as_bytes()) >= 4.2 {
             return true;
         }
     }
@@ -55,7 +67,7 @@ pub fn is_encrypted_string(s: &str) -> bool {
         && !s.contains(' ')
         && !s.contains('.')
         && !s.contains('/')
-        && shannon_entropy(s.as_bytes()) >= 5.0
+        && entropy(s.as_bytes()) >= 5.0
     {
         return true;
     }
@@ -63,12 +75,13 @@ pub fn is_encrypted_string(s: &str) -> bool {
 }
 
 /// Count encrypted strings from a list of strings.
-#[pyfunction]
+#[cfg_attr(feature = "python", pyfunction)]
 pub fn count_high_entropy_strings(strings: Vec<String>) -> usize {
     strings.iter().filter(|s| is_encrypted_string(s)).count()
 }
 
 /// Fast single-class parser extracting ClassFacts from raw bytecode.
+#[cfg(feature = "python")]
 #[pyfunction]
 pub fn extract_class_facts<'py>(py: Python<'py>, raw: &[u8]) -> PyResult<Bound<'py, PyAny>> {
     let raw_data = classfile::parse_class(raw).ok_or_else(|| {
@@ -81,6 +94,7 @@ pub fn extract_class_facts<'py>(py: Python<'py>, raw: &[u8]) -> PyResult<Bound<'
 }
 
 /// Fast single-pass JAR scanner extracting ClassFacts and EntropyMetrics in native Rust without blocking GIL.
+#[cfg(feature = "python")]
 #[pyfunction]
 pub fn extract_jar_facts<'py>(py: Python<'py>, jar_path: &str) -> PyResult<Bound<'py, PyAny>> {
     let result = py
@@ -91,6 +105,7 @@ pub fn extract_jar_facts<'py>(py: Python<'py>, jar_path: &str) -> PyResult<Bound
 }
 
 /// Compute SHA-512 hex digest of a file on disk without blocking GIL.
+#[cfg(feature = "python")]
 #[pyfunction]
 pub fn sha512_file(py: Python<'_>, file_path: &str) -> PyResult<String> {
     py.detach(|| hashing::sha512_file(file_path))
@@ -98,13 +113,15 @@ pub fn sha512_file(py: Python<'_>, file_path: &str) -> PyResult<String> {
 }
 
 /// Compute SHA-512 hex digest of an in-memory byte slice.
-#[pyfunction]
+#[cfg_attr(feature = "python", pyfunction)]
 pub fn sha512_bytes(data: &[u8]) -> String {
     hashing::sha512_bytes(data)
 }
 
+#[cfg(feature = "python")]
 #[pymodule]
 fn mod_analyzer_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(entropy, m)?)?;
     m.add_function(wrap_pyfunction!(shannon_entropy, m)?)?;
     m.add_function(wrap_pyfunction!(string_entropy, m)?)?;
     m.add_function(wrap_pyfunction!(is_encrypted_string, m)?)?;
@@ -122,16 +139,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shannon_entropy_of_empty_slice_is_zero() {
+    fn entropy_of_empty_slice_is_zero() {
+        assert_eq!(entropy(&[]), 0.0);
         assert_eq!(shannon_entropy(&[]), 0.0);
     }
 
     #[test]
-    fn shannon_entropy_of_uniform_bytes() {
+    fn entropy_of_uniform_bytes() {
         let single_byte = [0x42; 100];
+        assert_eq!(entropy(&single_byte), 0.0);
         assert_eq!(shannon_entropy(&single_byte), 0.0);
 
         let two_equal_bytes = [0x00, 0xFF, 0x00, 0xFF];
+        assert_eq!(entropy(&two_equal_bytes), 1.0);
         assert_eq!(shannon_entropy(&two_equal_bytes), 1.0);
     }
 

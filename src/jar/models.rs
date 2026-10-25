@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, thiserror::Error)]
@@ -24,7 +25,7 @@ pub struct ClassFactsData {
     pub method_refs_by_method: HashMap<String, HashSet<String>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EntropyMetricsData {
     pub byte_entropy_avg: f64,
     pub byte_entropy_max: f64,

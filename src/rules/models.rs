@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuleScope {
@@ -57,7 +57,7 @@ impl From<&str> for MatcherFact {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawRule {
     #[serde(default = "default_class_scope")]
     pub scope: String,
@@ -82,7 +82,7 @@ fn default_score() -> i64 {
     1
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawMatcher {
     pub fact: String,
     #[serde(default)]
@@ -122,7 +122,7 @@ impl CompiledRule {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RawMatch {
     pub category: String,
     pub trigger: String,
