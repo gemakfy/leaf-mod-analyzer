@@ -1,6 +1,8 @@
 [package]
 name = "mod_analyzer_core"
 version = "0.1.0"
+authors = ["gemakfy"]
+license = "GPL-3.0-only"
 edition = "2021"
 description = "Native Rust acceleration core for Mod Analyzer"
 
