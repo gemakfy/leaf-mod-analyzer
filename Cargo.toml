@@ -3,6 +3,7 @@ name = "mod_analyzer_core"
 version = "0.1.0"
 authors = ["gemakfy"]
 license = "GPL-3.0-only"
+repository = "https://github.com/gemakfy/leaf-mod-analyzer"
 edition = "2021"
 description = "Native Rust acceleration core for Mod Analyzer"
 

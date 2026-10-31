@@ -1,101 +1,176 @@
 {
   "Packed_Class_Crypter": {
     "scope": "jar",
-    "loaders": ["any"],
+    "loaders": [
+      "any"
+    ],
     "severity": "critical",
     "score": 8,
     "all_of": [
-      { "fact": "classes_min", "value": 1 },
-      { "fact": "byte_entropy_max_min", "value": 7.0 }
+      {
+        "fact": "classes_min",
+        "value": 1
+      },
+      {
+        "fact": "byte_entropy_max_min",
+        "value": 7.0
+      }
     ]
   },
   "Encrypted_String_Pool": {
     "scope": "jar",
-    "loaders": ["any"],
+    "loaders": [
+      "any"
+    ],
     "severity": "medium",
     "score": 4,
     "all_of": [
-      { "fact": "high_entropy_strings_min", "value": 25 }
+      {
+        "fact": "high_entropy_strings_min",
+        "value": 25
+      }
     ]
   },
   "Aggressive_Renaming": {
     "scope": "jar",
-    "loaders": ["any"],
+    "loaders": [
+      "any"
+    ],
     "severity": "medium",
     "score": 4,
     "all_of": [
-      { "fact": "classes_min", "value": 20 },
-      { "fact": "short_name_ratio_min", "value": 0.35 }
+      {
+        "fact": "classes_min",
+        "value": 20
+      },
+      {
+        "fact": "short_name_ratio_min",
+        "value": 0.35
+      }
     ]
   },
   "Control_Flow_Flattening": {
     "scope": "jar",
-    "loaders": ["any"],
+    "loaders": [
+      "any"
+    ],
     "severity": "medium",
     "score": 4,
     "all_of": [
-      { "fact": "classes_min", "value": 20 },
-      { "fact": "switch_density_min", "value": 0.1 }
+      {
+        "fact": "classes_min",
+        "value": 20
+      },
+      {
+        "fact": "switch_density_min",
+        "value": 0.1
+      }
     ]
   },
   "Obfuscated_Class_Names": {
     "scope": "jar",
-    "loaders": ["any"],
+    "loaders": [
+      "any"
+    ],
     "severity": "high",
     "score": 5,
     "all_of": [
-      { "fact": "classes_min", "value": 40 },
-      { "fact": "gibberish_ratio_min", "value": 0.4 }
+      {
+        "fact": "classes_min",
+        "value": 40
+      },
+      {
+        "fact": "gibberish_ratio_min",
+        "value": 0.4
+      }
     ]
   },
   "Homoglyph_Identifiers": {
     "scope": "class",
-    "loaders": ["any"],
+    "loaders": [
+      "any"
+    ],
     "severity": "medium",
     "score": 4,
     "all_of": [
-      { "fact": "member_homoglyphs_min", "value": 3 }
+      {
+        "fact": "member_homoglyphs_min",
+        "value": 3
+      }
     ]
   },
   "Hitbox_SetBoundingBox": {
     "scope": "class",
-    "loaders": ["any"],
+    "loaders": [
+      "any"
+    ],
     "severity": "high",
     "score": 9,
     "all_of": [
       {
         "fact": "method_ref",
-        "any": ["func_174826_a", "setBoundingBox", "method_5857", "m_20011_"]
+        "any": [
+          "func_174826_a",
+          "setBoundingBox",
+          "method_5857",
+          "m_20011_"
+        ]
       },
       {
         "fact": "method_ref",
-        "any": ["method_1009", "inflate", "grow", "expand", "stretch"]
+        "any": [
+          "method_1009",
+          "inflate",
+          "grow",
+          "expand",
+          "stretch"
+        ]
       }
     ]
   },
   "Hitbox_Iterate_Entities": {
     "scope": "class",
-    "loaders": ["any"],
+    "loaders": [
+      "any"
+    ],
     "severity": "high",
     "score": 9,
     "all_of": [
       {
         "fact": "method_ref",
-        "any": ["func_174826_a", "setBoundingBox", "method_5857", "m_20011_"]
+        "any": [
+          "func_174826_a",
+          "setBoundingBox",
+          "method_5857",
+          "m_20011_"
+        ]
       },
       {
         "fact": "method_ref",
-        "any": ["method_18456", "getPlayers", "getEntities", "method_8333", "method_18112"]
+        "any": [
+          "method_18456",
+          "getPlayers",
+          "getEntities",
+          "method_8333",
+          "method_18112"
+        ]
       },
       {
         "fact": "method_ref",
-        "any": ["AxisAlignedBB.<init>", "class_238.<init>", "AABB.<init>", "Box.<init>"]
+        "any": [
+          "AxisAlignedBB.<init>",
+          "class_238.<init>",
+          "AABB.<init>",
+          "Box.<init>"
+        ]
       }
     ]
   },
   "Hitbox_Mixin_Override": {
     "scope": "class",
-    "loaders": ["any"],
+    "loaders": [
+      "any"
+    ],
     "severity": "high",
     "score": 9,
     "all_of": [
@@ -110,6 +185,101 @@
           "Inject;"
         ],
         "pattern": "^(?:getBoundingBox|method_5829|getTargetingMargin|method_5871|getBaseDimensions|method_55694|m_142220_|func_174813_aQ)(?:\\(|$|\")|^getDimensions\\("
+      }
+    ]
+  },
+  "JVM_Agent_Attach_Injection": {
+    "scope": "class",
+    "loaders": [
+      "any"
+    ],
+    "severity": "critical",
+    "score": 10,
+    "all_of": [
+      {
+        "fact": "method_ref",
+        "any": [
+          "com/sun/tools/attach/VirtualMachine.attach",
+          "com/sun/tools/attach/VirtualMachine.loadAgent",
+          "com/sun/tools/attach/VirtualMachine.loadAgentLibrary",
+          "com/sun/tools/attach/VirtualMachine.loadAgentPath"
+        ]
+      },
+      {
+        "fact": "method_ref",
+        "any": [
+          "java/lang/ProcessHandle.current",
+          "java/lang/ProcessHandle.parent",
+          "java/lang/ProcessHandle.pid",
+          "java/lang/Long.parseLong"
+        ]
+      }
+    ]
+  },
+  "JVM_Agent_Process_Spawning": {
+    "scope": "class",
+    "loaders": [
+      "any"
+    ],
+    "severity": "high",
+    "score": 9,
+    "all_of": [
+      {
+        "fact": "method_ref",
+        "any": [
+          "java/lang/ProcessBuilder.<init>",
+          "java/lang/ProcessBuilder.start",
+          "java/lang/Runtime.exec"
+        ]
+      },
+      {
+        "fact": "string",
+        "pattern": "jdk\\.attach"
+      },
+      {
+        "fact": "method_ref",
+        "any": [
+          "java/lang/ProcessHandle.pid",
+          "java/lang/ProcessHandle.current"
+        ]
+      }
+    ]
+  },
+  "Zip_Payload_Dropper": {
+    "scope": "class",
+    "loaders": [
+      "any"
+    ],
+    "severity": "critical",
+    "score": 10,
+    "all_of": [
+      {
+        "fact": "method_ref",
+        "any": [
+          "java/util/zip/ZipInputStream.<init>",
+          "java/util/zip/ZipInputStream.getNextEntry",
+          "java/util/zip/ZipFile.entries",
+          "java/util/zip/ZipFile.getInputStream",
+          "java/util/zip/ZipFile.<init>"
+        ]
+      },
+      {
+        "fact": "method_ref",
+        "any": [
+          "java/io/FileOutputStream.<init>",
+          "java/io/FileOutputStream.write",
+          "java/nio/file/Files.write",
+          "java/nio/file/Files.copy",
+          "java/nio/file/Files.newOutputStream"
+        ]
+      },
+      {
+        "fact": "method_ref",
+        "any": [
+          "java/lang/ProcessBuilder.<init>",
+          "java/lang/ProcessBuilder.start",
+          "java/lang/Runtime.exec"
+        ]
       }
     ]
   }
