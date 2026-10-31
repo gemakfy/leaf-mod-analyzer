@@ -1,11 +1,9 @@
 use std::fs::File;
+use std::io::{Read, Seek};
 use std::path::Path;
 
-pub fn detect_loader(jar_path: &Path) -> String {
-    let Ok(file) = File::open(jar_path) else {
-        return "any".to_string();
-    };
-    let Ok(mut archive) = zip::ZipArchive::new(file) else {
+pub fn detect_loader_from_reader<R: Read + Seek>(reader: R) -> String {
+    let Ok(mut archive) = zip::ZipArchive::new(reader) else {
         return "any".to_string();
     };
 
@@ -39,4 +37,11 @@ pub fn detect_loader(jar_path: &Path) -> String {
     } else {
         "any".to_string()
     }
+}
+
+pub fn detect_loader(jar_path: &Path) -> String {
+    let Ok(file) = File::open(jar_path) else {
+        return "any".to_string();
+    };
+    detect_loader_from_reader(file)
 }

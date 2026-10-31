@@ -1,11 +1,12 @@
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::loader::detect_loader;
 use super::style::Style;
+use crate::hashing::sha512_bytes;
 use crate::jar::models::{EntropyMetricsData, JarScanError};
-use crate::jar::scan_jar;
+use crate::jar::{extract_embedded_jars, scan_jar, scan_jar_bytes};
 use crate::rules::engine::RuleEngine;
 use crate::rules::models::RawMatch;
 
@@ -15,11 +16,14 @@ pub struct SingleScanReport {
     pub file_size_bytes: u64,
     pub loader: String,
     pub classes_count: usize,
+    pub unparsed_count: usize,
     pub status: String,
     pub score: i64,
     pub entropy: EntropyMetricsData,
     pub missing_entrypoints: Vec<String>,
     pub matches: Vec<RawMatch>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub embedded: Vec<SingleScanReport>,
 }
 
 pub fn collect_jars(target: &Path) -> Vec<PathBuf> {
@@ -49,10 +53,87 @@ fn is_jar_file(path: &Path) -> bool {
     path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("jar")
 }
 
+pub fn max_score_recursive(report: &SingleScanReport) -> i64 {
+    let mut max = report.score;
+    for child in &report.embedded {
+        max = max.max(max_score_recursive(child));
+    }
+    max
+}
+
+fn scan_embedded_bytes_recursive(
+    bytes: &[u8],
+    engine: &RuleEngine,
+    forced_loader: Option<&str>,
+    visited: &mut HashSet<String>,
+    depth: usize,
+) -> Vec<SingleScanReport> {
+    if depth > 50 {
+        return Vec::new();
+    }
+    let Ok(embedded_jars) = extract_embedded_jars(std::io::Cursor::new(bytes)) else {
+        return Vec::new();
+    };
+
+    let mut reports = Vec::new();
+    for (name, sub_bytes) in embedded_jars {
+        if sub_bytes.is_empty() {
+            continue;
+        }
+        let hash = sha512_bytes(&sub_bytes);
+        if !visited.insert(hash) {
+            continue;
+        }
+
+        let Ok(sub_facts) = scan_jar_bytes(&sub_bytes) else {
+            continue;
+        };
+
+        let sub_loader = forced_loader.map(|s| s.to_string()).unwrap_or_else(|| {
+            super::loader::detect_loader_from_reader(std::io::Cursor::new(&sub_bytes))
+        });
+
+        let sub_matches = engine.evaluate(&sub_facts, &sub_loader, true);
+        let sub_score = calculate_score(&sub_matches);
+
+        let nested =
+            scan_embedded_bytes_recursive(&sub_bytes, engine, forced_loader, visited, depth + 1);
+
+        let max_nested = nested.iter().map(max_score_recursive).max().unwrap_or(0);
+        let effective_sub_score = sub_score.max(max_nested);
+
+        let sub_status = if effective_sub_score >= 7 {
+            "detected"
+        } else if effective_sub_score >= 2 {
+            "suspicious"
+        } else {
+            "clean"
+        }
+        .to_string();
+
+        reports.push(SingleScanReport {
+            file: name,
+            file_size_bytes: sub_bytes.len() as u64,
+            loader: sub_loader,
+            classes_count: sub_facts.classes.len(),
+            unparsed_count: sub_facts.unparsed.len(),
+            status: sub_status,
+            score: sub_score,
+            entropy: sub_facts.entropy,
+            missing_entrypoints: sub_facts.missing_entrypoints,
+            matches: sub_matches,
+            embedded: nested,
+        });
+    }
+
+    reports
+}
+
 pub fn scan_single_jar(
     jar_path: &Path,
     engine: &RuleEngine,
     forced_loader: Option<&str>,
+    deep: bool,
 ) -> Result<SingleScanReport, JarScanError> {
     let path_str = jar_path.to_string_lossy();
     let facts = scan_jar(&path_str)?;
@@ -63,9 +144,24 @@ pub fn scan_single_jar(
     let matches = engine.evaluate(&facts, &loader, true);
     let score = calculate_score(&matches);
 
-    let status = if score >= 7 {
+    let embedded = if deep {
+        let mut visited = HashSet::new();
+        if let Ok(root_bytes) = std::fs::read(jar_path) {
+            visited.insert(sha512_bytes(&root_bytes));
+            scan_embedded_bytes_recursive(&root_bytes, engine, forced_loader, &mut visited, 0)
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let max_emb_score = embedded.iter().map(max_score_recursive).max().unwrap_or(0);
+    let effective_score = score.max(max_emb_score);
+
+    let status = if effective_score >= 7 {
         "detected"
-    } else if score >= 2 {
+    } else if effective_score >= 2 {
         "suspicious"
     } else {
         "clean"
@@ -82,11 +178,13 @@ pub fn scan_single_jar(
         file_size_bytes: file_size,
         loader,
         classes_count: facts.classes.len(),
+        unparsed_count: facts.unparsed.len(),
         status,
         score,
         entropy: facts.entropy,
         missing_entrypoints: facts.missing_entrypoints,
         matches,
+        embedded,
     })
 }
 
@@ -119,16 +217,71 @@ pub fn print_single_report(report: &SingleScanReport, style: &Style) {
         style.bold("══════════════════════════════════════════════════════════════")
     );
     println!(" {} {}", style.cyan("ANALYZING:"), style.bold(&report.file));
+    let classes_display = if report.unparsed_count > 0 {
+        format!(
+            "{} ({} unparsed)",
+            report.classes_count, report.unparsed_count
+        )
+    } else {
+        report.classes_count.to_string()
+    };
     println!(
         " Size: {}  |  Classes: {}  |  Loader: {}",
         format_bytes(report.file_size_bytes),
-        report.classes_count,
+        classes_display,
         report.loader
     );
     print_telemetry(report, style);
     print_detections(&report.matches, style);
-    print_verdict(&report.status, report.score, style);
+    if !report.embedded.is_empty() {
+        print_embedded_reports(&report.embedded, style, 1);
+    }
+    print_verdict(report, style);
     println!();
+}
+
+fn print_embedded_reports(embedded: &[SingleScanReport], style: &Style, indent: usize) {
+    if indent == 1 {
+        println!(
+            "{}",
+            style.dim("──────────────────────────────────────────────────────────────")
+        );
+        println!("{}", style.bold(" EMBEDDED ARCHIVES (--deep)"));
+    }
+
+    for child in embedded {
+        let tag = match child.status.as_str() {
+            "detected" => style.red("[DETECTED]  "),
+            "suspicious" => style.yellow("[SUSPICIOUS]"),
+            _ => style.green("[CLEAN]     "),
+        };
+        let prefix = "  ".repeat(indent);
+        println!(
+            "{prefix}↳ {} {} (Score: {}, Classes: {})",
+            tag,
+            style.bold(&child.file),
+            child.score,
+            child.classes_count
+        );
+        for m in &child.matches {
+            let mtag = match m.severity.to_lowercase().as_str() {
+                "critical" => style.red("•"),
+                "high" => style.red("•"),
+                "medium" => style.yellow("•"),
+                _ => style.cyan("•"),
+            };
+            println!(
+                "{prefix}    {} {} (score: {}) -> {}",
+                mtag,
+                style.bold(&m.category),
+                m.score,
+                style.dim(&m.file)
+            );
+        }
+        if !child.embedded.is_empty() {
+            print_embedded_reports(&child.embedded, style, indent + 1);
+        }
+    }
 }
 
 fn print_telemetry(report: &SingleScanReport, style: &Style) {
@@ -171,7 +324,7 @@ fn print_detections(matches: &[RawMatch], style: &Style) {
 
     if matches.is_empty() {
         println!(
-            "   {} No suspicious bytecode patterns matched",
+            "   {} No suspicious bytecode patterns matched in root archive",
             style.green("✔")
         );
         return;
@@ -195,17 +348,30 @@ fn print_detections(matches: &[RawMatch], style: &Style) {
     }
 }
 
-fn print_verdict(status: &str, score: i64, style: &Style) {
+fn print_verdict(report: &SingleScanReport, style: &Style) {
     println!(
         "{}",
         style.bold("══════════════════════════════════════════════════════════════")
     );
-    let (label, score_str) = match status {
-        "detected" => (style.red("DETECTED / MALICIOUS"), format!("{score}")),
-        "suspicious" => (style.yellow("SUSPICIOUS"), format!("{score}")),
-        _ => (style.green("CLEAN"), format!("{score}")),
+    let label = match report.status.as_str() {
+        "detected" => style.red("DETECTED / MALICIOUS"),
+        "suspicious" => style.yellow("SUSPICIOUS"),
+        _ => style.green("CLEAN"),
     };
-    println!(" VERDICT: {label} (Total Score: {score_str})");
+    let max_emb_score = report
+        .embedded
+        .iter()
+        .map(max_score_recursive)
+        .max()
+        .unwrap_or(0);
+    if max_emb_score > 0 {
+        println!(
+            " VERDICT: {} (Root Score: {}, Embedded Max: {})",
+            label, report.score, max_emb_score
+        );
+    } else {
+        println!(" VERDICT: {} (Total Score: {})", label, report.score);
+    }
     println!(
         "{}",
         style.bold("══════════════════════════════════════════════════════════════")

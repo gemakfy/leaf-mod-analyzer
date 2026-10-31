@@ -33,6 +33,10 @@ struct Cli {
     /// Output full scan results in JSON format
     #[arg(long)]
     json: bool,
+
+    /// Recursively scan embedded .jar archives found inside the target
+    #[arg(short, long)]
+    deep: bool,
 }
 
 fn main() {
@@ -123,7 +127,7 @@ fn execute_scan(
     let mut stats = ScanStats::default();
 
     for jar in jars {
-        match scan_single_jar(jar, engine, cli.loader.as_deref()) {
+        match scan_single_jar(jar, engine, cli.loader.as_deref(), cli.deep) {
             Ok(report) => {
                 stats.record(&report.status);
                 if !cli.json {
@@ -187,6 +191,44 @@ fn print_batch_row(report: &SingleScanReport, style: &Style) {
         report.classes_count,
         style.dim(&rules_info)
     );
+    if !report.embedded.is_empty() {
+        print_batch_embedded(&report.embedded, style, 1);
+    }
+}
+
+fn print_batch_embedded(embedded: &[SingleScanReport], style: &Style, indent: usize) {
+    for child in embedded {
+        if child.status == "clean" && child.score == 0 && child.embedded.is_empty() {
+            continue;
+        }
+        let status_tag = match child.status.as_str() {
+            "detected" => style.red("DETECTED  "),
+            "suspicious" => style.yellow("SUSPICIOUS"),
+            _ => style.green("CLEAN     "),
+        };
+        let prefix = "  ".repeat(indent);
+        let rules_info = if child.matches.is_empty() {
+            format!("classes: {}", child.classes_count)
+        } else {
+            let mut categories: Vec<&str> =
+                child.matches.iter().map(|m| m.category.as_str()).collect();
+            categories.sort_unstable();
+            categories.dedup();
+            categories.join(", ")
+        };
+        let display_name = format_file_column(&child.file);
+        println!(
+            "{prefix}↳ [{}] {} (score: {:>2}, classes: {:>4}) | {}",
+            status_tag,
+            style.bold(&display_name),
+            child.score,
+            child.classes_count,
+            style.dim(&rules_info)
+        );
+        if !child.embedded.is_empty() {
+            print_batch_embedded(&child.embedded, style, indent + 1);
+        }
+    }
 }
 
 fn format_file_column(filename: &str) -> String {

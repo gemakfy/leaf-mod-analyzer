@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 use zip::ZipArchive;
 
@@ -12,6 +12,14 @@ use crate::classfile::{self, is_homoglyph, RawClassData, JVM_MAGIC};
 pub fn scan_jar(jar_path: &str) -> Result<JarFactsResult, JarScanError> {
     let file = File::open(Path::new(jar_path))?;
     let reader = BufReader::with_capacity(64 * 1024, file);
+    scan_jar_reader(reader)
+}
+
+pub fn scan_jar_bytes(bytes: &[u8]) -> Result<JarFactsResult, JarScanError> {
+    scan_jar_reader(std::io::Cursor::new(bytes))
+}
+
+pub fn scan_jar_reader<R: Read + Seek>(reader: R) -> Result<JarFactsResult, JarScanError> {
     let mut zip = ZipArchive::new(reader)?;
 
     let mut entry_names = HashSet::with_capacity(zip.len());
@@ -43,6 +51,11 @@ pub fn scan_jar(jar_path: &str) -> Result<JarFactsResult, JarScanError> {
             if file.read_to_end(&mut buf).is_ok() {
                 fabric_mod_content = Some(String::from_utf8_lossy(&buf).to_string());
             }
+        } else if name.ends_with(".class") {
+            let mut raw_bytes = Vec::with_capacity(4096);
+            if file.read_to_end(&mut raw_bytes).is_ok() {
+                acc.record_class_entry(&name, &raw_bytes);
+            }
         } else if let Some(raw_bytes) = read_candidate_class_entry(&mut file) {
             acc.record_class(&name, &raw_bytes);
         }
@@ -68,6 +81,33 @@ pub fn scan_jar(jar_path: &str) -> Result<JarFactsResult, JarScanError> {
         missing_entrypoints,
         entropy,
     })
+}
+
+pub fn extract_embedded_jars<R: Read + Seek>(
+    reader: R,
+) -> Result<Vec<(String, Vec<u8>)>, JarScanError> {
+    let mut zip = ZipArchive::new(reader)?;
+    let mut embedded = Vec::new();
+
+    for i in 0..zip.len() {
+        let Ok(mut file) = zip.by_index(i) else {
+            continue;
+        };
+        let Ok(name_cow) = file.name() else {
+            continue;
+        };
+        if file.is_dir() {
+            continue;
+        }
+        let name = name_cow.to_string();
+        if name.to_ascii_lowercase().ends_with(".jar") {
+            let mut buf = Vec::new();
+            if file.read_to_end(&mut buf).is_ok() {
+                embedded.push((name, buf));
+            }
+        }
+    }
+    Ok(embedded)
 }
 
 fn read_candidate_class_entry<R: Read>(file: &mut zip::read::ZipFile<'_, R>) -> Option<Vec<u8>> {
@@ -98,13 +138,27 @@ struct ClassScanAccumulator {
 }
 
 impl ClassScanAccumulator {
+    fn record_class_entry(&mut self, entry_name: &str, raw_bytes: &[u8]) {
+        self.byte_entropies.push(crate::entropy(raw_bytes));
+
+        if raw_bytes.len() < 4 || &raw_bytes[..4] != JVM_MAGIC {
+            self.unparsed.push(entry_name.to_string());
+            return;
+        }
+
+        self.parse_and_record(entry_name, raw_bytes);
+    }
+
     fn record_class(&mut self, entry_name: &str, raw_bytes: &[u8]) {
         if !entry_name.ends_with(".class") {
             self.hidden_class_entries += 1;
         }
 
         self.byte_entropies.push(crate::entropy(raw_bytes));
+        self.parse_and_record(entry_name, raw_bytes);
+    }
 
+    fn parse_and_record(&mut self, entry_name: &str, raw_bytes: &[u8]) {
         match classfile::parse_class(raw_bytes) {
             Some(data) => {
                 let simple_stripped = data
@@ -115,7 +169,7 @@ impl ClassScanAccumulator {
 
                 let is_numeric = !simple_stripped.is_empty()
                     && simple_stripped.chars().all(|c| c.is_ascii_digit());
-                if simple_stripped.len() <= 2 && !is_numeric {
+                if simple_stripped.chars().count() <= 2 && !is_numeric {
                     self.short_names += 1;
                 }
 
@@ -132,17 +186,24 @@ impl ClassScanAccumulator {
     }
 }
 
-fn extract_homoglyphs(simple_name: &str, member_names: &HashSet<String>) -> Vec<String> {
+fn extract_homoglyphs(
+    this_class: &str,
+    simple_name: &str,
+    member_names: &HashSet<String>,
+) -> Vec<String> {
+    let full_is_homoglyph = is_homoglyph(this_class);
     let simple_is_homoglyph = is_homoglyph(simple_name);
     let any_member_homoglyph = member_names.iter().any(|m| is_homoglyph(m));
 
-    if !simple_is_homoglyph && !any_member_homoglyph {
+    if !full_is_homoglyph && !simple_is_homoglyph && !any_member_homoglyph {
         return Vec::new();
     }
 
     let mut homoglyphs = std::collections::BTreeSet::new();
     if simple_is_homoglyph {
         homoglyphs.insert(simple_name.to_string());
+    } else if full_is_homoglyph {
+        homoglyphs.insert(this_class.to_string());
     }
     for m in member_names {
         if is_homoglyph(m) {
@@ -153,7 +214,8 @@ fn extract_homoglyphs(simple_name: &str, member_names: &HashSet<String>) -> Vec<
 }
 
 pub fn build_class_facts_data(data: RawClassData) -> ClassFactsData {
-    let member_homoglyphs = extract_homoglyphs(&data.simple_name, &data.member_names);
+    let member_homoglyphs =
+        extract_homoglyphs(&data.this_class, &data.simple_name, &data.member_names);
 
     ClassFactsData {
         class_name: data.this_class,
