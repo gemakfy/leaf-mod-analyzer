@@ -84,6 +84,9 @@ impl CompiledMatcher {
                 let threshold = self.value.unwrap_or(0.0);
                 facts.float_constants.iter().any(|c| c.abs() >= threshold)
             }
+            MatcherFact::NonAsciiName => {
+                !facts.class_name.is_ascii() || !facts.simple_name.is_ascii()
+            }
             _ => false,
         }
     }
@@ -136,7 +139,7 @@ impl CompiledMatcher {
                 let singles = facts
                     .classes
                     .iter()
-                    .filter(|c| c.simple_name.len() == 1)
+                    .filter(|c| c.simple_name.chars().count() == 1)
                     .count();
                 let ratio = (singles as f64) / (facts.classes.len() as f64);
                 ratio >= self.value.unwrap_or(0.0)

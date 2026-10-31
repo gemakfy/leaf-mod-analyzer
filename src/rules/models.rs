@@ -27,6 +27,7 @@ pub enum MatcherFact {
     HighEntropyStringsMin,
     HighEntropyClassesMin,
     SwitchDensityMin,
+    NonAsciiName,
     Unknown,
 }
 
@@ -52,6 +53,7 @@ impl From<&str> for MatcherFact {
             "high_entropy_strings_min" => Self::HighEntropyStringsMin,
             "high_entropy_classes_min" => Self::HighEntropyClassesMin,
             "switch_density_min" => Self::SwitchDensityMin,
+            "non_ascii_name" => Self::NonAsciiName,
             _ => Self::Unknown,
         }
     }

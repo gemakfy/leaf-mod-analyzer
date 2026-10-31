@@ -32,8 +32,12 @@ pub struct RawClassData {
 }
 
 /// Check if an identifier consists of visually confusable homoglyphs ([Il][Il1]+ | [O][O0]+)
-/// or stealthy mixed-script characters (Latin + Cyrillic lookalikes).
+/// or non-standard/non-ASCII characters (Japanese Kana, CJK, Cyrillic, lookalikes).
 pub fn is_homoglyph(name: &str) -> bool {
+    if !name.is_ascii() {
+        return true;
+    }
+
     let bytes = name.as_bytes();
     if bytes.len() < 2 {
         return false;
@@ -49,23 +53,6 @@ pub fn is_homoglyph(name: &str) -> bool {
         _ => {}
     }
 
-    if name.is_ascii() {
-        return false;
-    }
-
-    // Mixed script homoglyphs (e.g. disguising Latin 'player' with Cyrillic 'р')
-    let mut has_latin = false;
-    let mut has_cyrillic = false;
-    for c in name.chars() {
-        if c.is_ascii_alphabetic() {
-            has_latin = true;
-        } else if ('\u{0400}'..='\u{04FF}').contains(&c) {
-            has_cyrillic = true;
-        }
-        if has_latin && has_cyrillic {
-            return true;
-        }
-    }
     false
 }
 
@@ -188,6 +175,13 @@ mod tests {
     fn is_homoglyph_detects_mixed_cyrillic() {
         // "plаyer" with Cyrillic 'а' (\u0430)
         assert!(is_homoglyph("pl\u{0430}yer"));
+    }
+
+    #[test]
+    fn is_homoglyph_detects_non_ascii_and_kana() {
+        assert!(is_homoglyph("あ"));
+        assert!(is_homoglyph("ナミし"));
+        assert!(is_homoglyph("ルぼゔ"));
     }
 
     #[test]
