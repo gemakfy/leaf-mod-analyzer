@@ -9,11 +9,11 @@ pub fn print_banner(style: &Style) {
     println!("{}", style.green(" ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝     "));
     println!(
         "{}",
-        style.bold("  █▀▄▀█ █▀█ █▀▄   ▄▀█ █▄░█ ▄▀█ █░░ █▄█ ▀█ █▀▀ █▀█")
+        style.bold("  █▀▄▀█ █▀█ █▀▄   ▄▀█ █▄ █ ▄▀█ █   █ █ ▀█ █▀▀ █▀█")
     );
     println!(
         "{}",
-        style.bold("  █░▀░█ █▄█ █▄▀   █▀█ █░▀█ █▀█ █▄▄ ░█░ █▄ ██▄ █▀▄")
+        style.bold("  █ ▀ █ █▄█ █▄▀   █▀█ █ ▀█ █▀█ █▄▄  █  █▄ ██▄ █▀▄")
     );
     println!();
     println!(
